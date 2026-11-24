@@ -19,6 +19,14 @@ pub enum ErrorKind {
     ApprovalRequired,
     PolicyDenied,
     FileChanged,
+    /// The server's host key is not in any known_hosts file yet; see `details`.
+    HostKeyUnknown,
+    /// The server presented a different key than the one on record. Never bypassed.
+    HostKeyChanged,
+    AuthFailed,
+    /// The SSH connection dropped while a call was using it.
+    ConnectionLost,
+    OutputNotFound,
 }
 
 impl ErrorKind {
@@ -36,6 +44,11 @@ impl ErrorKind {
             Self::ApprovalRequired => -32003,
             Self::PolicyDenied => -32004,
             Self::FileChanged => -32005,
+            Self::HostKeyUnknown => -32006,
+            Self::HostKeyChanged => -32007,
+            Self::AuthFailed => -32008,
+            Self::ConnectionLost => -32009,
+            Self::OutputNotFound => -32010,
         }
     }
 }
@@ -48,6 +61,10 @@ pub struct RpcErrorData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub hint: Option<String>,
+    /// Structured context for some kinds, e.g. a [`crate::HostKeyInfo`] for host key errors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "Record<string, unknown>")]
+    pub details: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -64,12 +81,21 @@ impl RpcError {
         Self {
             code: kind.code(),
             message: message.into(),
-            data: RpcErrorData { kind, hint: None },
+            data: RpcErrorData {
+                kind,
+                hint: None,
+                details: None,
+            },
         }
     }
 
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         self.data.hint = Some(hint.into());
+        self
+    }
+
+    pub fn with_details(mut self, details: impl serde::Serialize) -> Self {
+        self.data.details = serde_json::to_value(details).ok();
         self
     }
 

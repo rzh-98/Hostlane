@@ -12,10 +12,43 @@ use hostlane_protocol::{Host, HostSource};
 const MAX_INCLUDE_DEPTH: usize = 16;
 const DEFAULT_PORT: u16 = 22;
 
+/// Connection settings that stay inside the daemon (not part of the wire [`Host`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SshOptions {
+    /// `IdentityAgent`: a socket path, `none`, or `SSH_AUTH_SOCK`.
+    pub identity_agent: Option<String>,
+    pub identities_only: bool,
+    pub user_known_hosts_files: Vec<PathBuf>,
+    pub host_key_alias: Option<String>,
+    pub connect_timeout_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Entry {
+    pub host: Host,
+    pub options: SshOptions,
+}
+
 #[derive(Debug, Default)]
 pub struct Loaded {
-    pub hosts: Vec<Host>,
+    pub entries: Vec<Entry>,
     pub warnings: Vec<String>,
+    blocks: Vec<Block>,
+}
+
+impl Loaded {
+    pub fn hosts(&self) -> Vec<Host> {
+        self.entries.iter().map(|e| e.host.clone()).collect()
+    }
+
+    pub fn find(&self, id: &str) -> Option<&Entry> {
+        self.entries.iter().find(|e| e.host.id == id)
+    }
+
+    /// Applies the config to any name, e.g. a `ProxyJump` hop that has no `Host` block.
+    pub fn resolve_name(&self, name: &str) -> Entry {
+        resolve_alias(&self.blocks, name)
+    }
 }
 
 #[derive(Debug)]
@@ -32,8 +65,8 @@ pub fn load(path: &Path) -> Loaded {
         Ok(text) => parse(&text, &base),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Loaded::default(),
         Err(err) => Loaded {
-            hosts: Vec::new(),
             warnings: vec![format!("cannot read {}: {err}", path.display())],
+            ..Loaded::default()
         },
     }
 }
@@ -47,7 +80,8 @@ pub fn parse(text: &str, base: &Path) -> Loaded {
         is_match: false,
     }];
     parse_into(text, base, 0, &mut blocks, &mut loaded.warnings);
-    loaded.hosts = resolve(&blocks);
+    loaded.entries = resolve(&blocks);
+    loaded.blocks = blocks;
     loaded
 }
 
@@ -133,7 +167,7 @@ fn tokenize(value: &str) -> Vec<String> {
     out
 }
 
-fn expand_tilde(path: &str) -> PathBuf {
+pub(crate) fn expand_tilde(path: &str) -> PathBuf {
     match path.strip_prefix("~/") {
         Some(rest) => dirs::home_dir().unwrap_or_default().join(rest),
         None => PathBuf::from(path),
@@ -167,7 +201,7 @@ fn is_concrete(pattern: &str) -> bool {
 }
 
 /// OpenSSH-style wildcard match: `*` any run, `?` one character.
-fn wildcard_match(pattern: &str, text: &str) -> bool {
+pub(crate) fn wildcard_match(pattern: &str, text: &str) -> bool {
     let p: Vec<char> = pattern.chars().collect();
     let t: Vec<char> = text.chars().collect();
     let (mut pi, mut ti) = (0, 0);
@@ -208,7 +242,7 @@ fn block_applies(block: &Block, alias: &str) -> bool {
     matched
 }
 
-fn resolve(blocks: &[Block]) -> Vec<Host> {
+fn resolve(blocks: &[Block]) -> Vec<Entry> {
     let mut aliases: Vec<&str> = Vec::new();
     for block in blocks.iter().filter(|b| !b.is_match) {
         for pattern in &block.patterns {
@@ -223,12 +257,21 @@ fn resolve(blocks: &[Block]) -> Vec<Host> {
         .collect()
 }
 
-fn resolve_alias(blocks: &[Block], alias: &str) -> Host {
+fn first_token(value: &str) -> String {
+    tokenize(value).into_iter().next().unwrap_or_default()
+}
+
+fn resolve_alias(blocks: &[Block], alias: &str) -> Entry {
     let mut hostname = None;
     let mut user = None;
     let mut port = None;
     let mut proxy_jump = None;
     let mut identity_files = Vec::new();
+    let mut identity_agent = None;
+    let mut identities_only = None;
+    let mut known_hosts_files = None;
+    let mut host_key_alias = None;
+    let mut connect_timeout = None;
 
     for block in blocks.iter().filter(|b| block_applies(b, alias)) {
         for (key, value) in &block.options {
@@ -248,18 +291,38 @@ fn resolve_alias(blocks: &[Block], alias: &str) -> Host {
                     proxy_jump.get_or_insert_with(|| value.clone());
                 }
                 "identityfile" => {
-                    let file = tokenize(value).into_iter().next().unwrap_or_default();
-                    let file = expand_tilde(&file).display().to_string();
+                    let file = expand_tilde(&first_token(value)).display().to_string();
                     if !identity_files.contains(&file) {
                         identity_files.push(file);
                     }
+                }
+                "identityagent" => {
+                    identity_agent.get_or_insert_with(|| first_token(value));
+                }
+                "identitiesonly" => {
+                    identities_only.get_or_insert_with(|| value.eq_ignore_ascii_case("yes"));
+                }
+                "userknownhostsfile" => {
+                    known_hosts_files.get_or_insert_with(|| {
+                        tokenize(value)
+                            .iter()
+                            .filter(|f| !f.eq_ignore_ascii_case("none"))
+                            .map(|f| expand_tilde(f))
+                            .collect::<Vec<_>>()
+                    });
+                }
+                "hostkeyalias" => {
+                    host_key_alias.get_or_insert_with(|| first_token(value));
+                }
+                "connecttimeout" if connect_timeout.is_none() => {
+                    connect_timeout = value.parse::<u64>().ok();
                 }
                 _ => {}
             }
         }
     }
 
-    Host {
+    let host = Host {
         id: alias.to_string(),
         alias: alias.to_string(),
         hostname: hostname.unwrap_or_else(|| alias.to_string()),
@@ -270,7 +333,15 @@ fn resolve_alias(blocks: &[Block], alias: &str) -> Host {
         source: HostSource::SshConfig,
         env: None,
         tags: Vec::new(),
-    }
+    };
+    let options = SshOptions {
+        identity_agent,
+        identities_only: identities_only.unwrap_or(false),
+        user_known_hosts_files: known_hosts_files.unwrap_or_default(),
+        host_key_alias,
+        connect_timeout_secs: connect_timeout,
+    };
+    Entry { host, options }
 }
 
 #[cfg(test)]
@@ -278,7 +349,7 @@ mod tests {
     use super::*;
 
     fn hosts(text: &str) -> Vec<Host> {
-        parse(text, Path::new("/nonexistent")).hosts
+        parse(text, Path::new("/nonexistent")).hosts()
     }
 
     #[test]
@@ -327,9 +398,33 @@ mod tests {
         .unwrap();
         let loaded = parse("Include conf.d/*.conf\nHost local\n", &dir);
         std::fs::remove_dir_all(&dir).unwrap();
-        let aliases: Vec<_> = loaded.hosts.iter().map(|h| h.alias.as_str()).collect();
+        let hosts = loaded.hosts();
+        let aliases: Vec<_> = hosts.iter().map(|h| h.alias.as_str()).collect();
         assert_eq!(aliases, ["included", "local"]);
-        assert_eq!(loaded.hosts[0].hostname, "9.9.9.9");
+        assert_eq!(hosts[0].hostname, "9.9.9.9");
+    }
+
+    #[test]
+    fn reads_connection_options() {
+        let loaded = parse(
+            "Host a\n  IdentityAgent ~/agent.sock\n  IdentitiesOnly yes\n  UserKnownHostsFile /kh1 /kh2\n  HostKeyAlias alias-a\n  ConnectTimeout 5\nHost *\n  IdentitiesOnly no\n",
+            Path::new("/nonexistent"),
+        );
+        let options = &loaded.find("a").unwrap().options;
+        assert!(
+            options
+                .identity_agent
+                .as_deref()
+                .unwrap()
+                .ends_with("agent.sock")
+        );
+        assert!(options.identities_only);
+        assert_eq!(
+            options.user_known_hosts_files,
+            [PathBuf::from("/kh1"), PathBuf::from("/kh2")]
+        );
+        assert_eq!(options.host_key_alias.as_deref(), Some("alias-a"));
+        assert_eq!(options.connect_timeout_secs, Some(5));
     }
 
     #[test]

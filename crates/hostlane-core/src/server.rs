@@ -4,9 +4,12 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
-use hostlane_protocol::{ErrorKind, Request, Response, RpcError};
+use hostlane_protocol::{
+    ErrorKind, Event, Notification, Request, Response, RpcError, Subscribed, method,
+};
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::sync::broadcast::error::RecvError;
 
 use crate::Daemon;
 use crate::handlers;
@@ -24,26 +27,72 @@ pub enum ServeError {
     Io(#[from] io::Error),
 }
 
-/// Handles one request line and returns the response line (without the newline).
-pub async fn handle_line(daemon: &Daemon, line: &str) -> String {
-    let response = match serde_json::from_str::<Request>(line) {
-        Ok(request) if request.jsonrpc != "2.0" => Response::err(
+fn parse_request(line: &str) -> Result<Request, Box<Response>> {
+    match serde_json::from_str::<Request>(line) {
+        Ok(request) if request.jsonrpc != "2.0" => Err(Box::new(Response::err(
             request.id,
             RpcError::new(ErrorKind::InvalidRequest, "jsonrpc must be \"2.0\""),
-        ),
-        Ok(request) => {
-            let id = request.id.clone();
-            match handlers::dispatch(daemon, &request.method, request.params).await {
-                Ok(result) => Response::ok(id, result),
-                Err(error) => Response::err(id, error),
-            }
-        }
-        Err(err) => Response::err(
+        ))),
+        Ok(request) => Ok(request),
+        Err(err) => Err(Box::new(Response::err(
             Value::Null,
             RpcError::new(ErrorKind::ParseError, format!("invalid request: {err}")),
-        ),
+        ))),
+    }
+}
+
+async fn handle_request(daemon: &Daemon, request: Request) -> Response {
+    let client = request.client.unwrap_or_default();
+    match handlers::dispatch(daemon, &client, &request.method, request.params).await {
+        Ok(result) => Response::ok(request.id, result),
+        Err(error) => Response::err(request.id, error),
+    }
+}
+
+fn to_line(value: &impl serde::Serialize) -> String {
+    serde_json::to_string(value).expect("messages always serialize")
+}
+
+/// Handles one request line and returns the response line (without the newline).
+pub async fn handle_line(daemon: &Daemon, line: &str) -> String {
+    let response = match parse_request(line) {
+        Ok(request) => handle_request(daemon, request).await,
+        Err(response) => *response,
     };
-    serde_json::to_string(&response).expect("responses always serialize")
+    to_line(&response)
+}
+
+/// Streams events until the client hangs up. The client sends nothing more.
+async fn subscribe<R, W>(
+    daemon: &Daemon,
+    id: Value,
+    reader: &mut R,
+    writer: &mut W,
+) -> io::Result<()>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut events = daemon.events.subscribe();
+    let ack = serde_json::to_value(Subscribed { subscribed: true }).unwrap_or(Value::Null);
+    write_line(writer, &to_line(&Response::ok(id, ack))).await?;
+    let mut sink = [0u8; 256];
+    loop {
+        let event = tokio::select! {
+            received = events.recv() => match received {
+                Ok(event) => event,
+                Err(RecvError::Lagged(skipped)) => Event::Lagged { skipped },
+                Err(RecvError::Closed) => return Ok(()),
+            },
+            read = reader.read(&mut sink) => match read {
+                Ok(0) | Err(_) => return Ok(()),
+                Ok(_) => continue,
+            },
+        };
+        let params = serde_json::to_value(&event).unwrap_or(Value::Null);
+        let notification = Notification::new(method::EVENT_NOTIFICATION, params);
+        write_line(writer, &to_line(&notification)).await?;
+    }
 }
 
 async fn serve_stream<S>(daemon: Arc<Daemon>, stream: S) -> io::Result<()>
@@ -75,8 +124,14 @@ where
         if trimmed.is_empty() {
             continue;
         }
-        let response = handle_line(&daemon, trimmed).await;
-        write_line(&mut writer, &response).await?;
+        let response = match parse_request(trimmed) {
+            Ok(request) if request.method == method::EVENTS_SUBSCRIBE => {
+                return subscribe(&daemon, request.id, &mut reader, &mut writer).await;
+            }
+            Ok(request) => handle_request(&daemon, request).await,
+            Err(response) => *response,
+        };
+        write_line(&mut writer, &to_line(&response)).await?;
     }
 }
 
@@ -108,6 +163,7 @@ pub async fn serve(daemon: Arc<Daemon>) -> Result<(), ServeError> {
 
     let listener = UnixListener::bind(&path)?;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    daemon.start().await;
     tracing::info!(socket = %path.display(), "daemon listening");
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -131,6 +187,7 @@ pub async fn serve(daemon: Arc<Daemon>) -> Result<(), ServeError> {
     };
 
     remove_socket(&path);
+    daemon.close().await;
     tracing::info!("daemon stopped");
     result
 }
@@ -153,7 +210,17 @@ mod tests {
     use super::*;
 
     fn daemon() -> Daemon {
-        Daemon::new("/tmp/hostlane-test.sock".into()).with_ssh_config("/nonexistent/config".into())
+        let data_dir = std::env::temp_dir().join(format!(
+            "hostlane-server-test-{}-{}",
+            std::process::id(),
+            crate::util::new_id("t")
+        ));
+        Daemon::open(crate::DaemonOptions {
+            socket_path: data_dir.join("hostlane.sock"),
+            data_dir,
+            ssh_config_path: "/nonexistent/config".into(),
+        })
+        .unwrap()
     }
 
     fn parse(line: &str) -> Value {

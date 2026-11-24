@@ -1,5 +1,5 @@
-import { contextBridge, ipcRenderer } from 'electron'
-import { IpcChannel, type DesktopApi } from '../shared/ipc'
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { IpcChannel, type DesktopApi, type HostlaneEvent } from '../shared/ipc'
 
 const api: DesktopApi = {
   platform: process.platform,
@@ -12,7 +12,14 @@ const api: DesktopApi = {
   setTitleBarHeight: (height) => ipcRenderer.invoke(IpcChannel.setTitleBarHeight, height),
   hostlane: {
     call: (method, params) => ipcRenderer.invoke(IpcChannel.hostlaneCall, method, params),
-    startDaemon: () => ipcRenderer.invoke(IpcChannel.hostlaneStartDaemon)
+    startDaemon: () => ipcRenderer.invoke(IpcChannel.hostlaneStartDaemon),
+    onEvent: (listener) => {
+      const handler = (_event: IpcRendererEvent, payload: HostlaneEvent) => listener(payload)
+      ipcRenderer.on(IpcChannel.hostlaneEvent, handler)
+      return () => {
+        ipcRenderer.removeListener(IpcChannel.hostlaneEvent, handler)
+      }
+    }
   }
 }
 

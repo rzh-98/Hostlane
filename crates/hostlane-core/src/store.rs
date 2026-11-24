@@ -1,0 +1,424 @@
+//! SQLite storage: the append-only audit log (`calls`) and command records for the
+//! session monitor (`execs`). The database lives at `<data dir>/hostlane.db`.
+
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+use hostlane_protocol::{
+    AuditEntry, AuditList, AuditListParams, AuditOutcome, ClientInfo, ErrorKind, ExecListParams,
+    ExecRecord, ExecStatus, RpcError,
+};
+use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value as Sql};
+use serde_json::{Value, json};
+
+const SCHEMA_VERSION: i64 = 1;
+
+const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at INTEGER NOT NULL,
+    finished_at INTEGER NOT NULL,
+    client TEXT NOT NULL,
+    session TEXT,
+    host TEXT,
+    method TEXT NOT NULL,
+    params TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    error_kind TEXT,
+    error_message TEXT,
+    result TEXT NOT NULL,
+    approver TEXT
+);
+CREATE INDEX IF NOT EXISTS calls_host ON calls (host, id);
+CREATE INDEX IF NOT EXISTS calls_started ON calls (started_at);
+CREATE TRIGGER IF NOT EXISTS calls_no_update BEFORE UPDATE ON calls
+BEGIN SELECT RAISE(ABORT, 'the audit log is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS calls_no_delete BEFORE DELETE ON calls
+BEGIN SELECT RAISE(ABORT, 'the audit log is append-only'); END;
+
+CREATE TABLE IF NOT EXISTS execs (
+    id TEXT PRIMARY KEY,
+    host TEXT NOT NULL,
+    command TEXT NOT NULL,
+    cwd TEXT,
+    client TEXT NOT NULL,
+    session TEXT,
+    status TEXT NOT NULL,
+    started_at INTEGER NOT NULL,
+    finished_at INTEGER,
+    exit_code INTEGER,
+    signal TEXT,
+    error TEXT,
+    stdout_bytes INTEGER NOT NULL DEFAULT 0,
+    stderr_bytes INTEGER NOT NULL DEFAULT 0,
+    params TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS execs_started ON execs (started_at);
+CREATE INDEX IF NOT EXISTS execs_host ON execs (host, started_at);
+";
+
+/// A call to append to the audit log.
+pub struct NewCall {
+    pub started_at: u64,
+    pub finished_at: u64,
+    pub client: ClientInfo,
+    pub host: Option<String>,
+    pub method: String,
+    pub params: Value,
+    pub outcome: AuditOutcome,
+    pub error: Option<RpcError>,
+    pub result: Value,
+}
+
+#[derive(Clone)]
+pub struct Store {
+    conn: Arc<Mutex<Connection>>,
+}
+
+fn internal(err: impl std::fmt::Display) -> RpcError {
+    RpcError::new(ErrorKind::Internal, format!("database error: {err}"))
+}
+
+fn enum_text(value: impl serde::Serialize) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_default()
+}
+
+fn enum_parse<T: serde::de::DeserializeOwned>(text: &str) -> Option<T> {
+    serde_json::from_value(Value::String(text.to_owned())).ok()
+}
+
+impl Store {
+    pub fn open(path: &Path) -> Result<Self, rusqlite::Error> {
+        let conn = Connection::open(path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        }
+        Self::init(conn)
+    }
+
+    #[cfg(test)]
+    pub fn open_in_memory() -> Result<Self, rusqlite::Error> {
+        Self::init(Connection::open_in_memory()?)
+    }
+
+    fn init(conn: Connection) -> Result<Self, rusqlite::Error> {
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        conn.execute_batch(SCHEMA)?;
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+        })
+    }
+
+    /// Runs `f` on a blocking thread with the connection locked.
+    async fn with<T, F>(&self, f: F) -> Result<T, RpcError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Connection) -> Result<T, rusqlite::Error> + Send + 'static,
+    {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().unwrap_or_else(|e| e.into_inner());
+            f(&conn)
+        })
+        .await
+        .map_err(internal)?
+        .map_err(internal)
+    }
+
+    pub async fn append_call(&self, call: NewCall) -> Result<i64, RpcError> {
+        self.with(move |conn| insert_call(conn, &call)).await
+    }
+
+    pub async fn list_calls(&self, params: AuditListParams) -> Result<AuditList, RpcError> {
+        self.with(move |conn| {
+            let mut sql = String::from("SELECT * FROM calls WHERE 1=1");
+            let mut args: Vec<Sql> = Vec::new();
+            let mut filter = |clause: &str, value: Sql| {
+                sql.push_str(clause);
+                args.push(value);
+            };
+            if let Some(host) = params.host {
+                filter(" AND host = ?", Sql::Text(host));
+            }
+            if let Some(client) = params.client {
+                filter(" AND client = ?", Sql::Text(client));
+            }
+            if let Some(method) = params.method {
+                filter(" AND method = ?", Sql::Text(method));
+            }
+            if let Some(since) = params.since {
+                filter(" AND started_at >= ?", Sql::Integer(since as i64));
+            }
+            if let Some(until) = params.until {
+                filter(" AND started_at < ?", Sql::Integer(until as i64));
+            }
+            if let Some(before) = params.before_id {
+                filter(" AND id < ?", Sql::Integer(before));
+            }
+            let limit = params.limit.unwrap_or(100).clamp(1, 1000) as usize;
+            sql.push_str(&format!(" ORDER BY id DESC LIMIT {}", limit + 1));
+            let mut stmt = conn.prepare(&sql)?;
+            let mut entries = stmt
+                .query_map(params_from_iter(args), call_from_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            let has_more = entries.len() > limit;
+            entries.truncate(limit);
+            Ok(AuditList { entries, has_more })
+        })
+        .await
+    }
+
+    pub async fn insert_exec(&self, record: ExecRecord, params: Value) -> Result<(), RpcError> {
+        self.with(move |conn| {
+            conn.execute(
+                "INSERT INTO execs (id, host, command, cwd, client, session, status, started_at, params)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    record.id,
+                    record.host,
+                    record.command,
+                    record.cwd,
+                    record.client.name,
+                    record.client.session,
+                    enum_text(record.status),
+                    record.started_at as i64,
+                    params.to_string(),
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn finish_exec(&self, record: ExecRecord) -> Result<(), RpcError> {
+        self.with(move |conn| {
+            conn.execute(
+                "UPDATE execs SET status = ?2, finished_at = ?3, exit_code = ?4, signal = ?5,
+                 error = ?6, stdout_bytes = ?7, stderr_bytes = ?8 WHERE id = ?1",
+                params![
+                    record.id,
+                    enum_text(record.status),
+                    record.finished_at.map(|t| t as i64),
+                    record.exit_code,
+                    record.signal,
+                    record.error,
+                    record.stdout_bytes as i64,
+                    record.stderr_bytes as i64,
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn get_exec(&self, id: String) -> Result<Option<ExecRecord>, RpcError> {
+        self.with(move |conn| {
+            conn.query_row("SELECT * FROM execs WHERE id = ?1", [id], exec_from_row)
+                .optional()
+        })
+        .await
+    }
+
+    pub async fn list_execs(&self, params: ExecListParams) -> Result<Vec<ExecRecord>, RpcError> {
+        self.with(move |conn| {
+            let mut sql = String::from("SELECT * FROM execs WHERE 1=1");
+            let mut args: Vec<Sql> = Vec::new();
+            if let Some(host) = params.host {
+                sql.push_str(" AND host = ?");
+                args.push(Sql::Text(host));
+            }
+            if let Some(before) = params.before {
+                sql.push_str(" AND started_at < ?");
+                args.push(Sql::Integer(before as i64));
+            }
+            let limit = params.limit.unwrap_or(50).clamp(1, 500);
+            sql.push_str(&format!(" ORDER BY started_at DESC, id DESC LIMIT {limit}"));
+            let mut stmt = conn.prepare(&sql)?;
+            stmt.query_map(params_from_iter(args), exec_from_row)?
+                .collect()
+        })
+        .await
+    }
+
+    /// Marks commands left running by a previous daemon as interrupted and audits them.
+    pub async fn recover_interrupted(&self, now: u64) -> Result<usize, RpcError> {
+        self.with(move |conn| {
+            let mut stmt = conn.prepare("SELECT * FROM execs WHERE status = 'running'")?;
+            let stale = stmt
+                .query_map([], |row| {
+                    Ok((exec_from_row(row)?, row.get::<_, String>("params")?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            for (record, params) in &stale {
+                conn.execute(
+                    "UPDATE execs SET status = 'interrupted', finished_at = ?2 WHERE id = ?1",
+                    params![record.id, now as i64],
+                )?;
+                insert_call(
+                    conn,
+                    &NewCall {
+                        started_at: record.started_at,
+                        finished_at: now,
+                        client: record.client.clone(),
+                        host: Some(record.host.clone()),
+                        method: hostlane_protocol::method::EXEC_RUN.into(),
+                        params: serde_json::from_str(params).unwrap_or(Value::Null),
+                        outcome: AuditOutcome::Interrupted,
+                        error: None,
+                        result: json!({ "output_id": record.id }),
+                    },
+                )?;
+            }
+            Ok(stale.len())
+        })
+        .await
+    }
+}
+
+fn insert_call(conn: &Connection, call: &NewCall) -> Result<i64, rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO calls (started_at, finished_at, client, session, host, method, params,
+         outcome, error_kind, error_message, result)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![
+            call.started_at as i64,
+            call.finished_at as i64,
+            call.client.name,
+            call.client.session,
+            call.host,
+            call.method,
+            call.params.to_string(),
+            enum_text(call.outcome),
+            call.error.as_ref().map(|e| enum_text(e.kind())),
+            call.error.as_ref().map(|e| e.message.clone()),
+            call.result.to_string(),
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+fn json_column(row: &Row, name: &str) -> rusqlite::Result<Value> {
+    let text: String = row.get(name)?;
+    Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
+}
+
+fn call_from_row(row: &Row) -> rusqlite::Result<AuditEntry> {
+    let outcome: String = row.get("outcome")?;
+    let error_kind: Option<String> = row.get("error_kind")?;
+    Ok(AuditEntry {
+        id: row.get("id")?,
+        started_at: row.get::<_, i64>("started_at")? as u64,
+        finished_at: row.get::<_, i64>("finished_at")? as u64,
+        client: ClientInfo {
+            name: row.get("client")?,
+            session: row.get("session")?,
+        },
+        host: row.get("host")?,
+        method: row.get("method")?,
+        params: json_column(row, "params")?,
+        outcome: enum_parse(&outcome).unwrap_or(AuditOutcome::Error),
+        error_kind: error_kind.as_deref().and_then(enum_parse),
+        error_message: row.get("error_message")?,
+        result: json_column(row, "result")?,
+        approver: row.get("approver")?,
+    })
+}
+
+fn exec_from_row(row: &Row) -> rusqlite::Result<ExecRecord> {
+    let status: String = row.get("status")?;
+    Ok(ExecRecord {
+        id: row.get("id")?,
+        host: row.get("host")?,
+        command: row.get("command")?,
+        cwd: row.get("cwd")?,
+        client: ClientInfo {
+            name: row.get("client")?,
+            session: row.get("session")?,
+        },
+        status: enum_parse(&status).unwrap_or(ExecStatus::Failed),
+        started_at: row.get::<_, i64>("started_at")? as u64,
+        finished_at: row.get::<_, Option<i64>>("finished_at")?.map(|t| t as u64),
+        exit_code: row.get("exit_code")?,
+        signal: row.get("signal")?,
+        error: row.get("error")?,
+        stdout_bytes: row.get::<_, i64>("stdout_bytes")? as u64,
+        stderr_bytes: row.get::<_, i64>("stderr_bytes")? as u64,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn call(host: &str, started_at: u64) -> NewCall {
+        NewCall {
+            started_at,
+            finished_at: started_at + 5,
+            client: ClientInfo::new("cli"),
+            host: Some(host.into()),
+            method: "exec.run".into(),
+            params: json!({ "command": "uptime" }),
+            outcome: AuditOutcome::Ok,
+            error: None,
+            result: json!({ "exit_code": 0 }),
+        }
+    }
+
+    #[tokio::test]
+    async fn audit_log_is_append_only_and_filterable() {
+        let store = Store::open_in_memory().unwrap();
+        for (i, host) in ["a", "b", "a"].iter().enumerate() {
+            store.append_call(call(host, 100 + i as u64)).await.unwrap();
+        }
+        let list = store
+            .list_calls(AuditListParams {
+                host: Some("a".into()),
+                limit: Some(1),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(list.entries.len(), 1);
+        assert!(list.has_more);
+        assert_eq!(list.entries[0].started_at, 102);
+        assert_eq!(list.entries[0].params["command"], "uptime");
+
+        let conn = store.conn.lock().unwrap();
+        assert!(conn.execute("UPDATE calls SET host = 'x'", []).is_err());
+        assert!(conn.execute("DELETE FROM calls", []).is_err());
+    }
+
+    #[tokio::test]
+    async fn interrupted_execs_are_recovered_and_audited() {
+        let store = Store::open_in_memory().unwrap();
+        let record = ExecRecord {
+            id: "ex-1".into(),
+            host: "web".into(),
+            command: "sleep 100".into(),
+            cwd: None,
+            client: ClientInfo::new("cli"),
+            status: ExecStatus::Running,
+            started_at: 10,
+            finished_at: None,
+            exit_code: None,
+            signal: None,
+            error: None,
+            stdout_bytes: 0,
+            stderr_bytes: 0,
+        };
+        store.insert_exec(record, json!({})).await.unwrap();
+        assert_eq!(store.recover_interrupted(20).await.unwrap(), 1);
+        let exec = store.get_exec("ex-1".into()).await.unwrap().unwrap();
+        assert_eq!(exec.status, ExecStatus::Interrupted);
+        let audit = store.list_calls(AuditListParams::default()).await.unwrap();
+        assert_eq!(audit.entries[0].outcome, AuditOutcome::Interrupted);
+    }
+}

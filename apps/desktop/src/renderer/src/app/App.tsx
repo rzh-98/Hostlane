@@ -5,6 +5,7 @@ import { isModKey } from '@/lib/platform'
 import { EmptyState, TooltipProvider } from '@/ui'
 import { AppSidebar } from './AppSidebar'
 import { APP_NAME } from './config'
+import { useConnectionsSync } from './connections'
 import { defaultPage, pages } from './pages'
 import { navigate, useRoute } from './router'
 
@@ -12,6 +13,7 @@ export function App() {
   const route = useRoute()
   const current = pages.find((page) => page.id === route) ?? defaultPage
   usePageShortcuts()
+  useConnectionsSync()
 
   return (
     <TooltipProvider>

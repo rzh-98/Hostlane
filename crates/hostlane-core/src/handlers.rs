@@ -1,16 +1,85 @@
 //! One function per JSON-RPC method. Handlers return a JSON value or a typed error;
-//! framing and request parsing live in `server.rs`.
+//! framing and request parsing live in `server.rs`. Calls that touch a server are
+//! appended to the audit log.
 
-use hostlane_protocol::{ErrorKind, HostsList, RpcError, method};
+use hostlane_protocol::{
+    AuditListParams, AuditOutcome, ClientInfo, ConnectionsList, ErrorKind, ExecList,
+    ExecListParams, ExecParams, HostParams, HostsList, RpcError, TrustParams, TrustResult, method,
+};
 use serde::Serialize;
-use serde_json::Value;
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 
-use crate::{Daemon, ssh_config};
+use crate::Daemon;
+use crate::exec;
+use crate::ssh::Trust;
+use crate::store::NewCall;
+use crate::util::now_ms;
+
+/// Methods recorded in the audit log.
+const AUDITED: &[&str] = &[
+    method::HOSTS_CONNECT,
+    method::HOSTS_DISCONNECT,
+    method::HOSTS_TRUST,
+    method::EXEC_RUN,
+];
 
 pub(crate) async fn dispatch(
     daemon: &Daemon,
+    client: &ClientInfo,
     name: &str,
-    _params: Value,
+    params: Value,
+) -> Result<Value, RpcError> {
+    if !AUDITED.contains(&name) {
+        return run(daemon, client, name, params).await;
+    }
+    let started_at = now_ms();
+    let host = params
+        .get("host")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let recorded_params = exec::redact_params(&params);
+    let result = run(daemon, client, name, params).await;
+    let (outcome, error, summary) = match &result {
+        Ok(value) => (AuditOutcome::Ok, None, summarize(value)),
+        Err(err) => (
+            AuditOutcome::Error,
+            Some(err.clone()),
+            err.data.details.clone().unwrap_or(Value::Null),
+        ),
+    };
+    let call = NewCall {
+        started_at,
+        finished_at: now_ms(),
+        client: client.clone(),
+        host,
+        method: name.to_string(),
+        params: recorded_params,
+        outcome,
+        error,
+        result: summary,
+    };
+    if let Err(err) = daemon.store.append_call(call).await {
+        tracing::error!(%err, method = name, "cannot write the audit log");
+    }
+    result
+}
+
+/// The audited result without bulky output.
+fn summarize(value: &Value) -> Value {
+    let mut value = value.clone();
+    if let Some(object) = value.as_object_mut() {
+        object.remove("stdout");
+        object.remove("stderr");
+    }
+    value
+}
+
+async fn run(
+    daemon: &Daemon,
+    client: &ClientInfo,
+    name: &str,
+    params: Value,
 ) -> Result<Value, RpcError> {
     match name {
         method::DAEMON_STATUS => to_value(daemon.status()),
@@ -18,7 +87,82 @@ pub(crate) async fn dispatch(
             daemon.request_shutdown();
             Ok(Value::Null)
         }
-        method::HOSTS_LIST => hosts_list(daemon).await,
+        method::HOSTS_LIST => {
+            let loaded = daemon.load_hosts().await?;
+            to_value(HostsList {
+                hosts: loaded.hosts(),
+                warnings: loaded.warnings,
+            })
+        }
+        method::HOSTS_CONNECT => {
+            let params: HostParams = parse(params)?;
+            let (entry, loaded) = daemon.resolve_host(&params.host).await?;
+            daemon.pool.connect(&entry, &loaded, Trust::Strict).await?;
+            connection(daemon, &params.host)
+        }
+        method::HOSTS_DISCONNECT => {
+            let params: HostParams = parse(params)?;
+            let disconnected = daemon.pool.disconnect(&params.host).await;
+            Ok(json!({ "disconnected": disconnected }))
+        }
+        method::HOSTS_TRUST => {
+            let params: TrustParams = parse(params)?;
+            let fingerprint = params.fingerprint.trim().to_string();
+            if !fingerprint.starts_with("SHA256:") {
+                return Err(RpcError::new(
+                    ErrorKind::InvalidParams,
+                    "`fingerprint` must look like SHA256:…",
+                ));
+            }
+            let (entry, loaded) = daemon.resolve_host(&params.host).await?;
+            let (_, host_key, added) = daemon
+                .pool
+                .connect(&entry, &loaded, Trust::Accept(fingerprint.clone()))
+                .await?;
+            if host_key.fingerprint != fingerprint {
+                return Err(RpcError::new(
+                    ErrorKind::InvalidParams,
+                    format!(
+                        "`{}` is already trusted with a different key ({})",
+                        params.host, host_key.fingerprint
+                    ),
+                )
+                .with_details(host_key));
+            }
+            to_value(TrustResult {
+                host_key,
+                added,
+                known_hosts_path: daemon
+                    .pool
+                    .locations()
+                    .hostlane_known_hosts
+                    .display()
+                    .to_string(),
+            })
+        }
+        method::CONNECTIONS_LIST => to_value(ConnectionsList {
+            connections: daemon.pool.list(),
+        }),
+        method::EXEC_RUN => {
+            let params: ExecParams = parse(params)?;
+            let (entry, loaded) = daemon.resolve_host(&params.host).await?;
+            to_value(exec::run(daemon, client, params, &entry, &loaded).await?)
+        }
+        method::EXEC_LIST => {
+            let params: ExecListParams = parse_or_default(params)?;
+            to_value(ExecList {
+                execs: daemon.store.list_execs(params).await?,
+            })
+        }
+        method::OUTPUT_READ => to_value(exec::read_output(daemon, parse(params)?).await?),
+        method::AUDIT_LIST => {
+            let params: AuditListParams = parse_or_default(params)?;
+            to_value(daemon.store.list_calls(params).await?)
+        }
+        method::EVENTS_SUBSCRIBE => Err(RpcError::new(
+            ErrorKind::InvalidRequest,
+            "events.subscribe must be the only request on its connection",
+        )),
         _ => Err(RpcError::new(
             ErrorKind::MethodNotFound,
             format!("unknown method `{name}`"),
@@ -27,15 +171,27 @@ pub(crate) async fn dispatch(
     }
 }
 
-async fn hosts_list(daemon: &Daemon) -> Result<Value, RpcError> {
-    let path = daemon.ssh_config_path.clone();
-    let loaded = tokio::task::spawn_blocking(move || ssh_config::load(&path))
-        .await
-        .map_err(|err| RpcError::new(ErrorKind::Internal, err.to_string()))?;
-    to_value(HostsList {
-        hosts: loaded.hosts,
-        warnings: loaded.warnings,
-    })
+fn connection(daemon: &Daemon, host: &str) -> Result<Value, RpcError> {
+    let connection = daemon
+        .pool
+        .list()
+        .into_iter()
+        .find(|c| c.host == host)
+        .ok_or_else(|| RpcError::new(ErrorKind::Internal, "connection state missing"))?;
+    to_value(connection)
+}
+
+fn parse<T: DeserializeOwned>(params: Value) -> Result<T, RpcError> {
+    serde_json::from_value(params)
+        .map_err(|err| RpcError::new(ErrorKind::InvalidParams, format!("invalid params: {err}")))
+}
+
+fn parse_or_default<T: DeserializeOwned + Default>(params: Value) -> Result<T, RpcError> {
+    if params.is_null() {
+        Ok(T::default())
+    } else {
+        parse(params)
+    }
 }
 
 fn to_value(value: impl Serialize) -> Result<Value, RpcError> {

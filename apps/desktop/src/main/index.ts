@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron'
 import { IpcChannel, RENDERER_METHODS, type ThemeSource } from '../shared/ipc'
-import { callDaemon, ensureDaemon, startDaemon } from './daemon'
+import { callDaemon, ensureDaemon, startDaemon, subscribeEvents } from './daemon'
 import { createMainWindow, trafficLightPosition, windowBackground } from './window'
 
 const THEME_SOURCES: ThemeSource[] = ['system', 'light', 'dark']
@@ -50,6 +50,12 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc()
     createMainWindow()
     void ensureDaemon()
+    const unsubscribe = subscribeEvents((event) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send(IpcChannel.hostlaneEvent, event)
+      }
+    })
+    app.on('will-quit', unsubscribe)
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow()

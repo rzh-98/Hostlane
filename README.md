@@ -4,7 +4,7 @@
   <p>An SSH runtime for the agent you already use. Let Codex, Claude Code or your own agent run commands, edit files, open tunnels and manage web-service ports on remote servers — from your machine, with fingerprint checks, approvals and an audit trail.</p>
   <p>No built-in LLM. Nothing to install on the server: <code>sshd</code> is enough.</p>
   <p>
-    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M0)-orange" />
+    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M1)-orange" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -21,7 +21,7 @@
 </div>
 
 > [!WARNING]
-> Hostlane is in early development. The M0 skeleton (daemon, local JSON-RPC, CLI, `~/.ssh/config` import and the desktop shell) works today; SSH connections, `exec`, files, tunnels and approvals arrive in M1–M6. See the [roadmap](#roadmap).
+> Hostlane is in early development. M0–M1 work today: the daemon, CLI, `~/.ssh/config` import, a pooled SSH client with host key checks, `exec`, the session monitor and the audit log. Files, ports, tunnels and approvals arrive in M2–M6. See the [roadmap](#roadmap).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -74,7 +74,7 @@ Details: [architecture and protocol](docs/architecture.md) (Chinese).
 
 There are no prebuilt binaries yet; build from source.
 
-**Requirements:** Rust 1.85+, Node.js 22.12+ and npm 10+.
+**Requirements:** Rust 1.89+, Node.js 22.12+ and npm 10+.
 
 ```bash
 git clone https://github.com/rzh-98/Hostlane.git && cd Hostlane
@@ -85,7 +85,8 @@ cargo test --workspace
 
 ./target/debug/hostlane daemon start
 ./target/debug/hostlane hosts
-./target/debug/hostlane --json status
+./target/debug/hostlane trust <host>              # first connection: verify and trust the host key
+./target/debug/hostlane exec <host> -- uname -a
 ./target/debug/hostlane daemon stop
 
 # Desktop app (development mode uses target/debug/hostlane and starts the daemon if needed)
@@ -98,23 +99,33 @@ npm run dev
 
 Every command accepts `--json`. On success, the result goes to stdout; on failure, the exit code is 1 and stdout holds `{"error":{"kind","message","hint"}}`.
 
-| Command                             | What it does                                                                                  |
-| ----------------------------------- | --------------------------------------------------------------------------------------------- |
-| `hostlane status`                   | Show whether the daemon is running, its version, PID and socket                               |
-| `hostlane hosts`                    | List hosts from `~/.ssh/config` (`Include`, wildcard blocks and first-value-wins are honored) |
-| `hostlane call <method> '<params>'` | Send a raw JSON-RPC call to the daemon                                                        |
-| `hostlane daemon start` / `stop`    | Start the daemon in the background, or ask it to exit                                         |
-| `hostlane daemon run`               | Run the daemon in the foreground                                                              |
-| `hostlane daemon socket-path`       | Print the socket path clients use                                                             |
+| Command                                                                            | What it does                                                                                  |
+| ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `hostlane status`                                                                  | Show whether the daemon is running, its version, PID and socket                               |
+| `hostlane hosts`                                                                   | List hosts from `~/.ssh/config` (`Include`, wildcard blocks and first-value-wins are honored) |
+| `hostlane exec <host> [--cwd DIR] [--env K=V] [--timeout SECS] [--stdin] -- <cmd>` | Run a command on a host. Without `--json`, the exit code is the remote one (124 on timeout)   |
+| `hostlane output <output_id> [--stream stderr] [--offset N]`                       | Read the full output of a truncated command (negative offsets count from the end)             |
+| `hostlane trust <host> [--fingerprint SHA256:…]`                                   | Verify and trust a host key, recorded in Hostlane's own `known_hosts`                         |
+| `hostlane connect` / `disconnect <host>`                                           | Open or close the connection to a host                                                        |
+| `hostlane connections`                                                             | Show connection state, latency, open channels and host keys                                   |
+| `hostlane watch [--host H]`                                                        | Follow every command agents run, with live output (read-only)                                 |
+| `hostlane history`                                                                 | Recent commands                                                                               |
+| `hostlane audit [--host H] [--client C]`                                           | Show the audit log                                                                            |
+| `hostlane call <method> '<params>'`                                                | Send a raw JSON-RPC call to the daemon                                                        |
+| `hostlane daemon start` / `stop`                                                   | Start the daemon in the background, or ask it to exit                                         |
+| `hostlane daemon run`                                                              | Run the daemon in the foreground                                                              |
+| `hostlane daemon socket-path`                                                      | Print the socket path clients use                                                             |
 
 ### Environment variables
 
-| Variable              | Effect                                        |
-| --------------------- | --------------------------------------------- |
-| `HOSTLANE_SOCKET`     | Override the socket path                      |
-| `HOSTLANE_DATA_DIR`   | Override the data directory (logs, database)  |
-| `HOSTLANE_SSH_CONFIG` | Override the `ssh_config` path                |
-| `HOSTLANE_BIN`        | The `hostlane` binary used by the desktop app |
+| Variable              | Effect                                                                              |
+| --------------------- | ----------------------------------------------------------------------------------- |
+| `HOSTLANE_SOCKET`     | Override the socket path                                                            |
+| `HOSTLANE_DATA_DIR`   | Override the data directory (logs, database)                                        |
+| `HOSTLANE_SSH_CONFIG` | Override the `ssh_config` path                                                      |
+| `HOSTLANE_BIN`        | The `hostlane` binary used by the desktop app                                       |
+| `HOSTLANE_CLIENT`     | Caller name for CLI calls (default `cli`), shown in the audit log and Sessions page |
+| `HOSTLANE_SESSION`    | Agent session ID; the Sessions page groups by it                                    |
 
 To try things without touching your real setup, point all of them at a temporary directory:
 
@@ -132,7 +143,11 @@ Until the MCP server lands in M6, agents use the CLI. Add this to your project's
 Operate servers through the `hostlane` CLI; do not run ssh directly.
 
 - Run `hostlane --json hosts` first to see the available hosts.
+- Run commands with `hostlane --json exec <host> [--cwd DIR] [--timeout SECS] -- <command>`.
+- Long output is truncated (`truncated: true`); read all of it with `hostlane --json output <output_id>`.
 - Always pass `--json`; on failure, read error.kind and error.hint to decide the next step.
+- On HOST_KEY_UNKNOWN or HOST_KEY_CHANGED, stop and tell the user; never trust a host key yourself.
+- Set `HOSTLANE_CLIENT=<agent name>` and `HOSTLANE_SESSION=<session id>` so the audit log and Sessions page can tell callers apart.
 ```
 
 The desktop app's Integrations page has the same snippet with a copy button. In M6 it will also provide ready-made MCP config for Codex, Claude Code and Cursor.
@@ -142,8 +157,8 @@ The desktop app's Integrations page has the same snippet with a copy button. In 
 | Milestone                 | Scope                                                                                        | Status  |
 | ------------------------- | -------------------------------------------------------------------------------------------- | ------- |
 | **M0** Skeleton           | Rust workspace, daemon, local socket JSON-RPC, CLI, `~/.ssh/config` import, desktop shell    | ✅ Done |
-| **M1** Connect & exec     | `russh` connection pool, host fingerprint checks, `exec`, session monitor, audit log         | Next    |
-| **M2** Files              | `read_file`, `list_dir`, `search`, `apply_patch`, `write_file`                               | Planned |
+| **M1** Connect & exec     | `russh` connection pool, host fingerprint checks, `exec`, session monitor, audit log         | ✅ Done |
+| **M2** Files              | `read_file`, `list_dir`, `search`, `apply_patch`, `write_file`                               | Next    |
 | **M3** Ports              | Port discovery, process mapping, HTTP probing, port notes, free-port lookup                  | Planned |
 | **M4** Tunnels            | Local forwarding, saved tunnels, auto-reconnect, conflict detection, temporary agent tunnels | Planned |
 | **M5** Policy             | Risk levels, rules, blocking approvals, global stop                                          | Planned |
@@ -157,11 +172,11 @@ The full requirement list, with IDs and priorities, is in [docs/requirements.md]
 ├─ Cargo.toml                  Rust workspace
 ├─ crates/
 │  ├─ hostlane-protocol/       Wire types: JSON-RPC frames, error codes, method params and results
-│  ├─ hostlane-core/           Daemon: socket server, handlers, ssh_config parser, client
+│  ├─ hostlane-core/           Daemon: socket server, SSH pool, exec, audit (SQLite), client
 │  └─ hostlane-cli/            The `hostlane` binary: CLI + `daemon` subcommands
 ├─ apps/desktop/               Electron app, based on Desktop-Starter
 │  └─ src/
-│     ├─ main/daemon.ts        Connects to the daemon and starts it on demand
+│     ├─ main/daemon.ts        Connects to the daemon, starts it on demand, forwards events
 │     ├─ shared/protocol/      TypeScript types generated from hostlane-protocol (do not edit)
 │     └─ renderer/src/pages/   Hosts, Ports, Tunnels, Sessions, Approvals, Audit, Integrations, Settings
 └─ docs/                       Requirements, architecture, screenshots
@@ -190,6 +205,9 @@ npx prettier --write src
 
 - The local socket is readable only by the current user (`0600`, inside a `0700` directory).
 - SSH keys, passwords and audit data stay on your machine. Credentials never reach the renderer process and are never logged.
+- A person must verify and trust a host key on first connection. A changed key blocks the connection, and neither agents nor `hosts.trust` can override it. Hostlane writes only its own `known_hosts` and never touches `~/.ssh/known_hosts`.
+- The audit log is append-only: database triggers reject updates and deletes.
+- Authentication uses ssh-agent or unencrypted key files; `ssh-add` passphrase-protected keys first. Password login is not supported yet.
 - The renderer runs sandboxed and can call only an explicit allowlist of daemon methods.
 - Hostlane sends no telemetry and talks to nothing except your servers.
 

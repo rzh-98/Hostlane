@@ -5,4 +5,8 @@ export type RpcErrorData = { kind: ErrorKind,
 /**
  * What the caller can do next, written for an agent to act on.
  */
-hint?: string, };
+hint?: string, 
+/**
+ * Structured context for some kinds, e.g. a [`crate::HostKeyInfo`] for host key errors.
+ */
+details?: Record<string, unknown>, };

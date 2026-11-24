@@ -4,8 +4,11 @@ import { Page, PageContent, Toolbar } from '@/layout'
 import { Badge, IconButton, Section } from '@/ui'
 
 const cliCommands: [command: string, description: string][] = [
-  ['hostlane --json status', '查看守护进程状态'],
   ['hostlane --json hosts', '列出可用主机'],
+  ['hostlane --json exec <host> -- <command>', '执行命令，返回退出码、stdout、stderr 和耗时'],
+  ['hostlane --json output <output_id>', '读取被截断的完整输出'],
+  ['hostlane trust <host>', '核对并信任主机指纹（需要人确认）'],
+  ['hostlane watch', '在终端里实时查看所有命令和输出'],
   ["hostlane --json call <method> '<params>'", '直接调用任意 JSON-RPC 方法'],
   ['hostlane daemon start', '在后台启动守护进程']
 ]
@@ -13,7 +16,11 @@ const cliCommands: [command: string, description: string][] = [
 const agentsSnippet = `## 远程服务器
 通过 \`hostlane\` CLI 操作服务器，不要直接运行 ssh。
 - 先运行 \`hostlane --json hosts\` 查看可用主机。
-- 命令都加 \`--json\`；失败时读取 error.kind 和 error.hint 决定下一步。`
+- 执行命令：\`hostlane --json exec <host> [--cwd DIR] [--timeout SECS] -- <command>\`。
+- 输出过长会被截断（truncated 为 true），用 \`hostlane --json output <output_id>\` 读取全文。
+- 命令都加 \`--json\`；失败时读取 error.kind 和 error.hint 决定下一步。
+- 遇到 HOST_KEY_UNKNOWN 或 HOST_KEY_CHANGED 时停下来告诉用户，不要自行信任主机密钥。
+- 设置 \`HOSTLANE_CLIENT=<agent 名称>\` 和 \`HOSTLANE_SESSION=<会话 ID>\`，审计和会话页会按它们区分来源。`
 
 export function IntegrationsPage() {
   return (

@@ -1,0 +1,343 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { RefreshCw, ScrollText, TriangleAlert } from 'lucide-react'
+import { callHostlane, daemonStore } from '@/app/daemon'
+import { DaemonOffline } from '@/app/DaemonOffline'
+import { useHostlaneEvent } from '@/app/events'
+import { formatDuration, formatTime } from '@/app/format'
+import { OutputDialog } from '@/app/OutputDialog'
+import { Page, PageContent, Toolbar } from '@/layout'
+import {
+  Badge,
+  Button,
+  EmptyState,
+  FormRow,
+  IconButton,
+  List,
+  ListItem,
+  Notice,
+  Section,
+  Select
+} from '@/ui'
+import type { HostlaneError } from '@shared/ipc'
+import type { AuditEntry } from '@shared/protocol/AuditEntry'
+import type { AuditList } from '@shared/protocol/AuditList'
+import type { AuditListParams } from '@shared/protocol/AuditListParams'
+import type { HostsList } from '@shared/protocol/HostsList'
+
+const PAGE_SIZE = 100
+const ANY = '*'
+const REFRESH_DELAY_MS = 800
+
+const ranges = {
+  [ANY]: { label: '全部时间', ms: 0 },
+  '1h': { label: '最近 1 小时', ms: 3_600_000 },
+  '24h': { label: '最近 24 小时', ms: 86_400_000 },
+  '7d': { label: '最近 7 天', ms: 7 * 86_400_000 }
+} as const
+type Range = keyof typeof ranges
+
+const methodLabels: Record<string, string> = {
+  'exec.run': '执行命令',
+  'hosts.connect': '连接',
+  'hosts.disconnect': '断开',
+  'hosts.trust': '信任主机密钥'
+}
+
+const errorLabels: Partial<Record<string, string>> = {
+  HOST_KEY_UNKNOWN: '密钥未信任',
+  HOST_KEY_CHANGED: '指纹已变化',
+  CONNECTION_LOST: '连接断开',
+  AUTH_FAILED: '认证失败',
+  HOST_UNREACHABLE: '无法连接',
+  HOST_NOT_FOUND: '主机不存在',
+  INVALID_PARAMS: '参数错误'
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+}
+
+function summary(entry: AuditEntry): string {
+  const params = record(entry.params)
+  if (typeof params.command === 'string') return params.command
+  if (typeof params.fingerprint === 'string') return params.fingerprint
+  return ''
+}
+
+function outputId(entry: AuditEntry): string | null {
+  const id = record(entry.result).output_id
+  return typeof id === 'string' ? id : null
+}
+
+function outcomeBadge(entry: AuditEntry) {
+  if (entry.outcome === 'interrupted') return <Badge tone="warning">中断</Badge>
+  if (entry.outcome === 'error') {
+    return (
+      <Badge tone="danger">{(entry.error_kind && errorLabels[entry.error_kind]) ?? '失败'}</Badge>
+    )
+  }
+  const result = record(entry.result)
+  if (result.status === 'timed_out') return <Badge tone="warning">超时</Badge>
+  if (typeof result.exit_code === 'number' && result.exit_code !== 0) {
+    return <Badge tone="warning">退出 {result.exit_code}</Badge>
+  }
+  return <Badge tone="success">成功</Badge>
+}
+
+function clientLabel(entry: AuditEntry): string {
+  return entry.client.session ? `${entry.client.name} · ${entry.client.session}` : entry.client.name
+}
+
+export function AuditPage() {
+  const { phase } = daemonStore.use()
+  const online = phase === 'online'
+  const [host, setHost] = useState(ANY)
+  const [client, setClient] = useState(ANY)
+  const [range, setRange] = useState<Range>(ANY)
+  const [entries, setEntries] = useState<AuditEntry[]>([])
+  const [hasMore, setHasMore] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<HostlaneError | null>(null)
+  const [hosts, setHosts] = useState<string[]>([])
+  const [clients, setClients] = useState<string[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [viewing, setViewing] = useState<AuditEntry | null>(null)
+  const request = useRef(0)
+
+  const load = useCallback(
+    async (before?: number) => {
+      const id = ++request.current
+      const params: AuditListParams = { limit: PAGE_SIZE, before_id: before }
+      if (host !== ANY) params.host = host
+      if (client !== ANY) params.client = client
+      if (range !== ANY) params.since = Date.now() - ranges[range].ms
+      setLoading(true)
+      const reply = await callHostlane<AuditList>('audit.list', params)
+      if (id !== request.current) return
+      setLoading(false)
+      setLoaded(true)
+      if (!reply.ok) {
+        setError(reply.error)
+        return
+      }
+      setError(null)
+      setHasMore(reply.result.has_more)
+      setEntries((previous) =>
+        before === undefined ? reply.result.entries : [...previous, ...reply.result.entries]
+      )
+      setClients((previous) => {
+        const names = new Set(previous)
+        for (const entry of reply.result.entries) names.add(entry.client.name)
+        return names.size === previous.length ? previous : [...names].sort()
+      })
+    },
+    [host, client, range]
+  )
+
+  useEffect(() => {
+    if (online) void load()
+  }, [online, load])
+
+  useEffect(() => {
+    if (!online) return
+    void callHostlane<HostsList>('hosts.list').then((reply) => {
+      if (reply.ok) setHosts(reply.result.hosts.map((h) => h.id))
+    })
+  }, [online])
+
+  const refreshTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(refreshTimer.current), [])
+  useHostlaneEvent((event) => {
+    if (event.type !== 'exec_finished' && event.type !== 'subscribed') return
+    if (entries.length > PAGE_SIZE) return
+    window.clearTimeout(refreshTimer.current)
+    refreshTimer.current = window.setTimeout(() => void load(), REFRESH_DELAY_MS)
+  })
+
+  const selected = useMemo(
+    () => entries.find((e) => String(e.id) === selectedId) ?? null,
+    [entries, selectedId]
+  )
+
+  const filtered = host !== ANY || client !== ANY || range !== ANY
+
+  return (
+    <Page>
+      <Toolbar
+        title="审计"
+        subtitle={loaded ? `${entries.length}${hasMore ? '+' : ''} 条` : undefined}
+      >
+        <Select
+          aria-label="主机"
+          value={host}
+          onValueChange={setHost}
+          disabled={!online}
+          options={[
+            { value: ANY, label: '全部主机' },
+            ...[...new Set([...hosts, ...(host === ANY ? [] : [host])])].map((h) => ({
+              value: h,
+              label: h
+            }))
+          ]}
+        />
+        <Select
+          aria-label="来源"
+          value={client}
+          onValueChange={setClient}
+          disabled={!online}
+          options={[
+            { value: ANY, label: '全部来源' },
+            ...clients.map((c) => ({ value: c, label: c }))
+          ]}
+        />
+        <Select
+          aria-label="时间"
+          value={range}
+          onValueChange={(value) => setRange(value as Range)}
+          disabled={!online}
+          options={Object.entries(ranges).map(([value, { label }]) => ({ value, label }))}
+        />
+        <IconButton
+          label="刷新"
+          icon={<RefreshCw className={loading ? 'animate-spin' : undefined} />}
+          disabled={!online || loading}
+          onClick={() => void load()}
+        />
+      </Toolbar>
+
+      {online && error && (
+        <Notice tone="danger" icon={<TriangleAlert />} onDismiss={() => setError(null)}>
+          {error.message}
+        </Notice>
+      )}
+
+      {!online ? (
+        <DaemonOffline />
+      ) : loaded && entries.length === 0 ? (
+        <EmptyState
+          icon={<ScrollText />}
+          title={filtered ? '没有符合条件的记录' : '还没有记录'}
+          description={
+            filtered
+              ? '调整筛选条件后再试。'
+              : 'agent 执行命令、连接主机和信任主机密钥时，都会在这里留下不可修改的记录。'
+          }
+        />
+      ) : (
+        <PageContent padded={false}>
+          <div className="flex w-[28rem] shrink-0 flex-col overflow-y-auto border-r border-border p-2">
+            <List aria-label="审计记录" value={selectedId} onValueChange={setSelectedId}>
+              {entries.map((entry) => (
+                <ListItem
+                  key={entry.id}
+                  value={String(entry.id)}
+                  title={
+                    <span className="flex min-w-0 items-baseline gap-2">
+                      <span className="shrink-0">{methodLabels[entry.method] ?? entry.method}</span>
+                      <span className="truncate font-mono text-sm text-fg-muted">
+                        {summary(entry)}
+                      </span>
+                    </span>
+                  }
+                  description={[formatTime(entry.started_at), clientLabel(entry), entry.host]
+                    .filter(Boolean)
+                    .join(' · ')}
+                  trailing={outcomeBadge(entry)}
+                />
+              ))}
+            </List>
+            {hasMore && (
+              <Button
+                className="mt-2 self-center"
+                size="sm"
+                variant="ghost"
+                disabled={loading}
+                onClick={() => void load(entries[entries.length - 1]?.id)}
+              >
+                加载更早的记录
+              </Button>
+            )}
+          </div>
+          <div className="min-w-0 flex-1 overflow-y-auto">
+            {selected ? (
+              <AuditDetail entry={selected} onViewOutput={() => setViewing(selected)} />
+            ) : (
+              <EmptyState icon={<ScrollText />} title="选择一条记录查看详情" />
+            )}
+          </div>
+        </PageContent>
+      )}
+
+      <OutputDialog
+        outputId={viewing ? outputId(viewing) : null}
+        title={viewing ? summary(viewing) : ''}
+        onClose={() => setViewing(null)}
+      />
+    </Page>
+  )
+}
+
+function AuditDetail({ entry, onViewOutput }: { entry: AuditEntry; onViewOutput: () => void }) {
+  const output = outputId(entry)
+  return (
+    <div className="mx-auto flex max-w-2xl flex-col gap-8 p-page">
+      <header className="flex flex-col gap-1.5">
+        <div className="flex items-center gap-2">
+          <h2 className="truncate text-xl font-semibold">
+            {methodLabels[entry.method] ?? entry.method}
+          </h2>
+          {outcomeBadge(entry)}
+        </div>
+        <span className="selectable font-mono text-sm text-fg-muted">
+          #{entry.id} · {entry.method}
+        </span>
+      </header>
+
+      <Section
+        title="调用"
+        divided
+        actions={
+          output && (
+            <Button size="sm" onClick={onViewOutput}>
+              查看完整输出
+            </Button>
+          )
+        }
+      >
+        <Row label="时间" value={new Date(entry.started_at).toLocaleString()} />
+        <Row label="耗时" value={formatDuration(entry.finished_at - entry.started_at)} />
+        <Row label="来源" value={clientLabel(entry)} />
+        <Row label="主机" value={entry.host ?? '—'} />
+        <Row label="审批人" value={entry.approver ?? '无需审批'} />
+        {entry.error_kind && <Row label="错误类型" value={entry.error_kind} />}
+        {entry.error_message && <Row label="错误信息" value={entry.error_message} />}
+      </Section>
+
+      <Section title="参数">
+        <Json value={entry.params} />
+      </Section>
+      <Section title="结果">
+        <Json value={entry.result} />
+      </Section>
+    </div>
+  )
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <FormRow label={label}>
+      <span className="selectable text-sm break-all whitespace-pre-line text-fg-muted">
+        {value}
+      </span>
+    </FormRow>
+  )
+}
+
+function Json({ value }: { value: unknown }) {
+  return (
+    <pre className="selectable mt-2 overflow-x-auto rounded-md border border-border bg-bg-subtle p-3 font-mono text-sm whitespace-pre-wrap break-all text-fg-muted">
+      {value === null || value === undefined ? '—' : JSON.stringify(value, null, 2)}
+    </pre>
+  )
+}
