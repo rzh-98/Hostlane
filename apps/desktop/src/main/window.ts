@@ -19,7 +19,8 @@ export function trafficLightPosition(titleBarHeight: number): { x: number; y: nu
   return { x: TRAFFIC_LIGHT.x, y: Math.round((titleBarHeight - TRAFFIC_LIGHT.height) / 2) }
 }
 
-export function createMainWindow(): BrowserWindow {
+/** `page` opens a route other than the default, e.g. `approvals`. */
+export function createMainWindow(page?: string): BrowserWindow {
   const win = new BrowserWindow({
     width: 1180,
     height: 760,
@@ -59,10 +60,11 @@ export function createMainWindow(): BrowserWindow {
   })
 
   const devServerUrl = process.env['ELECTRON_RENDERER_URL']
+  const hash = page ? `/${page}` : undefined
   if (devServerUrl) {
-    void win.loadURL(devServerUrl)
+    void win.loadURL(hash ? `${devServerUrl}#${hash}` : devServerUrl)
   } else {
-    void win.loadFile(join(__dirname, '../renderer/index.html'))
+    void win.loadFile(join(__dirname, '../renderer/index.html'), { hash })
   }
 
   return win

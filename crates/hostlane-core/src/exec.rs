@@ -222,6 +222,7 @@ pub async fn run(
     params: ExecParams,
     entry: &Entry,
     loaded: &Loaded,
+    approver: Option<String>,
 ) -> Result<ExecResult, RpcError> {
     if params.command.trim().is_empty() {
         return Err(invalid("`command` must not be empty"));
@@ -256,6 +257,7 @@ pub async fn run(
         error: None,
         stdout_bytes: 0,
         stderr_bytes: 0,
+        approver,
     };
     let audit_params = redact_params(&serde_json::to_value(&params).unwrap_or(Value::Null));
     daemon
@@ -268,9 +270,11 @@ pub async fn run(
 
     let mut stdout = Sink::new(OutputStream::Stdout, &daemon.outputs_dir, &id, max_output);
     let mut stderr = Sink::new(OutputStream::Stderr, &daemon.outputs_dir, &id, max_output);
+    let stop = (!crate::policy::is_desktop(client)).then(|| daemon.policy.stop_signal());
     let outcome = drive(
         daemon,
         &lease,
+        stop,
         channel,
         &script,
         params.stdin,
@@ -329,6 +333,7 @@ pub async fn run(
 async fn drive(
     daemon: &Daemon,
     lease: &Lease,
+    stop: Option<tokio::sync::watch::Receiver<bool>>,
     channel: russh::Channel<russh::client::Msg>,
     script: &str,
     stdin: Option<String>,
@@ -363,8 +368,27 @@ async fn drive(
     let mut deadline = tokio::time::Instant::now() + timeout;
     let mut terminating = false;
     let mut closed_cleanly = false;
+    let cancellable = stop.is_some();
+    let stopped = async move {
+        match stop {
+            Some(mut stop) => {
+                let _ = stop.wait_for(|stopped| *stopped).await;
+            }
+            None => std::future::pending().await,
+        }
+    };
+    tokio::pin!(stopped);
+    let mut cancelled = false;
     loop {
         tokio::select! {
+            _ = &mut stopped, if cancellable && !cancelled => {
+                cancelled = true;
+                terminating = true;
+                outcome.status = ExecStatus::Cancelled;
+                outcome.error = Some("terminated by the emergency stop".into());
+                let _ = writer.signal(Sig::TERM).await;
+                deadline = tokio::time::Instant::now() + TERM_GRACE;
+            }
             message = reader.wait() => match message {
                 Some(ChannelMsg::Data { data }) => stdout.push(&data, id, daemon).await,
                 Some(ChannelMsg::ExtendedData { data, ext: 1 }) => stderr.push(&data, id, daemon).await,

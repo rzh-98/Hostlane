@@ -1,22 +1,24 @@
 //! SQLite storage: the append-only audit log (`calls`), command records for the
 //! session monitor (`execs`), file changes with their diffs (`file_changes`) and the
-//! user's notes on ports (`port_notes`) and saved tunnels (`tunnels`).
+//! user's notes on ports (`port_notes`), saved tunnels (`tunnels`), policy rules
+//! (`policy_rules`), host labels (`host_labels`) and small settings (`settings`).
 //! The database lives at `<data dir>/hostlane.db`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use hostlane_protocol::{
     AuditEntry, AuditList, AuditListParams, AuditOutcome, ClientInfo, ErrorKind, ExecListParams,
-    ExecRecord, ExecStatus, FileChange, FileOperation, PortNote, RpcError,
+    ExecRecord, ExecStatus, FileChange, FileOperation, HostEnv, PolicyRule, PortNote, Risk,
+    RpcError,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value as Sql};
 use serde_json::{Value, json};
 
 use crate::tunnels::TunnelConfig;
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS calls (
@@ -104,7 +106,35 @@ CREATE TABLE IF NOT EXISTS tunnels (
     session TEXT,
     created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS policy_rules (
+    id TEXT PRIMARY KEY,
+    decision TEXT NOT NULL,
+    conditions TEXT NOT NULL,
+    note TEXT,
+    created_at INTEGER NOT NULL,
+    created_by TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS host_labels (
+    host TEXT PRIMARY KEY,
+    env TEXT,
+    tags TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 ";
+
+/// Columns added after a table was first created: (table, column, definition).
+const ADDED_COLUMNS: &[(&str, &str, &str)] =
+    &[("calls", "risk", "INTEGER"), ("execs", "approver", "TEXT")];
+
+/// Host labels set in Hostlane: environment and tags.
+pub type HostLabels = HashMap<String, (Option<HostEnv>, Vec<String>)>;
 
 /// A call to append to the audit log.
 pub struct NewCall {
@@ -117,6 +147,8 @@ pub struct NewCall {
     pub outcome: AuditOutcome,
     pub error: Option<RpcError>,
     pub result: Value,
+    pub approver: Option<String>,
+    pub risk: Option<Risk>,
 }
 
 impl NewCall {
@@ -134,7 +166,8 @@ impl NewCall {
             error_kind: self.error.as_ref().map(RpcError::kind),
             error_message: self.error.as_ref().map(|e| e.message.clone()),
             result: self.result.clone(),
-            approver: None,
+            approver: self.approver.clone(),
+            risk: self.risk,
         }
     }
 }
@@ -180,6 +213,18 @@ impl Store {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch(SCHEMA)?;
+        for (table, column, definition) in ADDED_COLUMNS {
+            let exists: bool = conn.query_row(
+                &format!("SELECT count(*) FROM pragma_table_info('{table}') WHERE name = ?1"),
+                [column],
+                |row| row.get::<_, i64>(0).map(|n| n > 0),
+            )?;
+            if !exists {
+                conn.execute_batch(&format!(
+                    "ALTER TABLE {table} ADD COLUMN {column} {definition}"
+                ))?;
+            }
+        }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -223,6 +268,9 @@ impl Store {
             if let Some(method) = params.method {
                 filter(" AND method = ?", Sql::Text(method));
             }
+            if let Some(risk) = params.min_risk {
+                filter(" AND risk >= ?", Sql::Integer(risk.level() as i64));
+            }
             if let Some(since) = params.since {
                 filter(" AND started_at >= ?", Sql::Integer(since as i64));
             }
@@ -248,8 +296,9 @@ impl Store {
     pub async fn insert_exec(&self, record: ExecRecord, params: Value) -> Result<(), RpcError> {
         self.with(move |conn| {
             conn.execute(
-                "INSERT INTO execs (id, host, command, cwd, client, session, status, started_at, params)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT INTO execs (id, host, command, cwd, client, session, status, started_at, params,
+                 approver)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     record.id,
                     record.host,
@@ -260,6 +309,7 @@ impl Store {
                     enum_text(record.status),
                     record.started_at as i64,
                     params.to_string(),
+                    record.approver,
                 ],
             )?;
             Ok(())
@@ -474,6 +524,126 @@ impl Store {
         .await
     }
 
+    pub async fn policy_rules(&self) -> Result<Vec<PolicyRule>, RpcError> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare("SELECT * FROM policy_rules ORDER BY created_at, id")?;
+            stmt.query_map([], |row| {
+                let decision: String = row.get("decision")?;
+                let conditions: String = row.get("conditions")?;
+                Ok(PolicyRule {
+                    id: row.get("id")?,
+                    decision: enum_parse(&decision).unwrap_or(hostlane_protocol::Decision::Approve),
+                    when: serde_json::from_str(&conditions).unwrap_or_default(),
+                    note: row.get("note")?,
+                    created_at: row.get::<_, i64>("created_at")? as u64,
+                    created_by: row.get("created_by")?,
+                })
+            })?
+            .collect()
+        })
+        .await
+    }
+
+    pub async fn insert_rule(&self, rule: PolicyRule) -> Result<(), RpcError> {
+        self.with(move |conn| {
+            conn.execute(
+                "INSERT INTO policy_rules (id, decision, conditions, note, created_at, created_by)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    rule.id,
+                    enum_text(rule.decision),
+                    serde_json::to_string(&rule.when).unwrap_or_default(),
+                    rule.note,
+                    rule.created_at as i64,
+                    rule.created_by,
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn delete_rule(&self, id: String) -> Result<(), RpcError> {
+        self.with(move |conn| {
+            conn.execute("DELETE FROM policy_rules WHERE id = ?1", [id])?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn setting(&self, key: &str) -> Result<Option<String>, RpcError> {
+        let key = key.to_string();
+        self.with(move |conn| {
+            conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
+                row.get(0)
+            })
+            .optional()
+        })
+        .await
+    }
+
+    /// Stores a setting, or removes it when `value` is `None`.
+    pub async fn set_setting(&self, key: String, value: Option<String>) -> Result<(), RpcError> {
+        self.with(move |conn| {
+            match value {
+                Some(value) => conn.execute(
+                    "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                     ON CONFLICT (key) DO UPDATE SET value = ?2",
+                    params![key, value],
+                )?,
+                None => conn.execute("DELETE FROM settings WHERE key = ?1", [key])?,
+            };
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn host_labels(&self) -> Result<HostLabels, RpcError> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare("SELECT host, env, tags FROM host_labels")?;
+            stmt.query_map([], |row| {
+                let env: Option<String> = row.get("env")?;
+                let tags: String = row.get("tags")?;
+                Ok((
+                    row.get::<_, String>("host")?,
+                    (
+                        env.as_deref().and_then(enum_parse),
+                        serde_json::from_str(&tags).unwrap_or_default(),
+                    ),
+                ))
+            })?
+            .collect()
+        })
+        .await
+    }
+
+    /// Stores a host's labels; no env and no tags removes them.
+    pub async fn set_host_labels(
+        &self,
+        host: String,
+        env: Option<HostEnv>,
+        tags: Vec<String>,
+    ) -> Result<(), RpcError> {
+        self.with(move |conn| {
+            if env.is_none() && tags.is_empty() {
+                conn.execute("DELETE FROM host_labels WHERE host = ?1", [host])?;
+            } else {
+                conn.execute(
+                    "INSERT INTO host_labels (host, env, tags, updated_at) VALUES (?1, ?2, ?3, ?4)
+                     ON CONFLICT (host) DO UPDATE SET env = ?2, tags = ?3, updated_at = ?4",
+                    params![
+                        host,
+                        env.map(enum_text),
+                        serde_json::to_string(&tags).unwrap_or_default(),
+                        crate::util::now_ms() as i64,
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
     /// Marks commands left running by a previous daemon as interrupted and audits them.
     pub async fn recover_interrupted(&self, now: u64) -> Result<usize, RpcError> {
         self.with(move |conn| {
@@ -500,6 +670,8 @@ impl Store {
                         outcome: AuditOutcome::Interrupted,
                         error: None,
                         result: json!({ "output_id": record.id }),
+                        approver: record.approver.clone(),
+                        risk: None,
                     },
                 )?;
             }
@@ -512,8 +684,8 @@ impl Store {
 fn insert_call(conn: &Connection, call: &NewCall) -> Result<i64, rusqlite::Error> {
     conn.execute(
         "INSERT INTO calls (started_at, finished_at, client, session, host, method, params,
-         outcome, error_kind, error_message, result)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+         outcome, error_kind, error_message, result, approver, risk)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             call.started_at as i64,
             call.finished_at as i64,
@@ -526,6 +698,8 @@ fn insert_call(conn: &Connection, call: &NewCall) -> Result<i64, rusqlite::Error
             call.error.as_ref().map(|e| enum_text(e.kind())),
             call.error.as_ref().map(|e| e.message.clone()),
             call.result.to_string(),
+            call.approver,
+            call.risk.map(|r| r.level() as i64),
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -555,6 +729,9 @@ fn call_from_row(row: &Row) -> rusqlite::Result<AuditEntry> {
         error_message: row.get("error_message")?,
         result: json_column(row, "result")?,
         approver: row.get("approver")?,
+        risk: row
+            .get::<_, Option<i64>>("risk")?
+            .and_then(|level| Risk::from_level(level as u8)),
     })
 }
 
@@ -577,6 +754,7 @@ fn exec_from_row(row: &Row) -> rusqlite::Result<ExecRecord> {
         error: row.get("error")?,
         stdout_bytes: row.get::<_, i64>("stdout_bytes")? as u64,
         stderr_bytes: row.get::<_, i64>("stderr_bytes")? as u64,
+        approver: row.get("approver")?,
     })
 }
 
@@ -619,6 +797,8 @@ mod tests {
             outcome: AuditOutcome::Ok,
             error: None,
             result: json!({ "exit_code": 0 }),
+            approver: None,
+            risk: Some(Risk::from_level((started_at % 4) as u8).unwrap()),
         }
     }
 
@@ -640,6 +820,15 @@ mod tests {
         assert!(list.has_more);
         assert_eq!(list.entries[0].started_at, 102);
         assert_eq!(list.entries[0].params["command"], "uptime");
+        let risky = store
+            .list_calls(AuditListParams {
+                min_risk: Some(Risk::L1),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(risky.entries.len(), 2);
+        assert_eq!(risky.entries[0].risk, Some(Risk::L2));
 
         let conn = store.conn.lock().unwrap();
         assert!(conn.execute("UPDATE calls SET host = 'x'", []).is_err());
@@ -663,11 +852,13 @@ mod tests {
             error: None,
             stdout_bytes: 0,
             stderr_bytes: 0,
+            approver: Some("desktop".into()),
         };
         store.insert_exec(record, json!({})).await.unwrap();
         assert_eq!(store.recover_interrupted(20).await.unwrap(), 1);
         let exec = store.get_exec("ex-1".into()).await.unwrap().unwrap();
         assert_eq!(exec.status, ExecStatus::Interrupted);
+        assert_eq!(exec.approver.as_deref(), Some("desktop"));
         let audit = store.list_calls(AuditListParams::default()).await.unwrap();
         assert_eq!(audit.entries[0].outcome, AuditOutcome::Interrupted);
     }
@@ -730,6 +921,47 @@ mod tests {
         assert_eq!(store.tunnels().await.unwrap(), vec![updated]);
         store.delete_tunnel("tn-1".into()).await.unwrap();
         assert!(store.tunnels().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn policy_rules_settings_and_labels_round_trip() {
+        let store = Store::open_in_memory().unwrap();
+        let rule = PolicyRule {
+            id: "ru-1".into(),
+            decision: hostlane_protocol::Decision::Deny,
+            when: hostlane_protocol::RuleConditions {
+                env: Some(HostEnv::Prod),
+                min_risk: Some(Risk::L3),
+                ..Default::default()
+            },
+            note: Some("no".into()),
+            created_at: 1,
+            created_by: "desktop".into(),
+        };
+        store.insert_rule(rule.clone()).await.unwrap();
+        assert_eq!(store.policy_rules().await.unwrap(), vec![rule]);
+        store.delete_rule("ru-1".into()).await.unwrap();
+        assert!(store.policy_rules().await.unwrap().is_empty());
+
+        store
+            .set_setting("k".into(), Some("v".into()))
+            .await
+            .unwrap();
+        assert_eq!(store.setting("k").await.unwrap().as_deref(), Some("v"));
+        store.set_setting("k".into(), None).await.unwrap();
+        assert_eq!(store.setting("k").await.unwrap(), None);
+
+        store
+            .set_host_labels("web".into(), Some(HostEnv::Prod), vec!["eu".into()])
+            .await
+            .unwrap();
+        let labels = store.host_labels().await.unwrap();
+        assert_eq!(labels["web"], (Some(HostEnv::Prod), vec!["eu".to_string()]));
+        store
+            .set_host_labels("web".into(), None, Vec::new())
+            .await
+            .unwrap();
+        assert!(store.host_labels().await.unwrap().is_empty());
     }
 
     #[tokio::test]

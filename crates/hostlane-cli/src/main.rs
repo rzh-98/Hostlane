@@ -11,13 +11,14 @@ use hostlane_core::client::{Client, ClientError};
 use hostlane_core::{Daemon, DaemonOptions, paths, server};
 use hostlane_protocol::{
     AuditList, AuditListParams, AuditOutcome, ClientInfo, Connection, ConnectionState,
-    ConnectionsList, DaemonStatus, ErrorKind, Event, ExecList, ExecListParams, ExecParams,
-    ExecRecord, ExecResult, ExecStatus, HostKeyInfo, HostsList, OutputChunk, OutputReadParams,
-    OutputStream, TrustResult, method,
+    ConnectionsList, DaemonStatus, Decision, ErrorKind, Event, ExecList, ExecListParams,
+    ExecParams, ExecRecord, ExecResult, ExecStatus, HostKeyInfo, HostsList, OutputChunk,
+    OutputReadParams, OutputStream, PolicyCheck, TrustResult, method,
 };
 use serde_json::{Value, json};
 
 mod files;
+mod policy;
 mod ports;
 mod tunnels;
 
@@ -32,6 +33,19 @@ struct Cli {
     /// Daemon socket path (defaults to the per-user location; env: HOSTLANE_SOCKET).
     #[arg(long, global = true, value_name = "PATH")]
     socket: Option<PathBuf>,
+
+    /// When a call needs approval, fail at once with APPROVAL_REQUIRED and a ticket_id
+    /// instead of waiting.
+    #[arg(long = "async", global = true)]
+    asynchronous: bool,
+
+    /// Repeat a call that needed approval, using its ticket_id.
+    #[arg(long, global = true, value_name = "TICKET_ID")]
+    ticket: Option<String>,
+
+    /// Seconds to wait for an approval (default 120).
+    #[arg(long, global = true, value_name = "SECONDS")]
+    approval_timeout: Option<u64>,
 
     #[command(subcommand)]
     command: Command,
@@ -87,6 +101,8 @@ enum Command {
     Ports(ports::PortCommand),
     #[command(flatten)]
     Tunnels(tunnels::TunnelCommand),
+    #[command(flatten)]
+    Policy(policy::PolicyCommand),
     /// Open the pooled connection to a host and show its host key.
     Connect { host: String },
     /// Trust a host's key after you have verified its fingerprint.
@@ -114,6 +130,9 @@ enum Command {
         /// Client name, e.g. `cli` or `desktop`.
         #[arg(long)]
         client: Option<String>,
+        /// Only calls assessed at this risk or higher.
+        #[arg(long, value_enum)]
+        min_risk: Option<policy::RiskArg>,
         #[arg(long, default_value_t = 50)]
         limit: u32,
     },
@@ -187,7 +206,24 @@ fn client_info() -> ClientInfo {
 
 async fn run(cli: Cli) -> Result<ExitCode> {
     let socket = cli.socket.clone().unwrap_or_else(paths::socket_path);
-    let client = Client::new(&socket).with_info(client_info());
+    let mut approval = serde_json::Map::new();
+    if let Some(ticket) = &cli.ticket {
+        approval.insert("ticket_id".into(), json!(ticket));
+    }
+    if cli.asynchronous {
+        approval.insert("async".into(), json!(true));
+    }
+    if let Some(secs) = cli.approval_timeout {
+        approval.insert("approval_timeout_secs".into(), json!(secs));
+    }
+    let info = client_info();
+    let interactive =
+        info.name == "cli" && std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    let waits = !cli.asynchronous && !interactive;
+    let mut client = Client::new(&socket).with_info(info).with_approval(approval);
+    if interactive {
+        client = client.with_approver(Arc::new(policy::ask));
+    }
     let json = cli.json;
     match cli.command {
         Command::Status => status(&client, json).await?,
@@ -210,7 +246,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
                 timeout_ms: timeout.map(|secs| (secs * 1000.0).round().max(1.0) as u64),
                 max_output_bytes: max_output,
             };
-            return exec(&client, params, json).await;
+            return exec(&client, params, json, waits && cli.ticket.is_none()).await;
         }
         Command::Output {
             output_id,
@@ -221,6 +257,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Command::Files(command) => files::run(&client, command, json).await?,
         Command::Ports(command) => ports::run(&client, command, json).await?,
         Command::Tunnels(command) => tunnels::run(&client, command, json).await?,
+        Command::Policy(command) => policy::run(&client, command, json).await?,
         Command::Connect { host } => connect(&client, &host, json).await?,
         Command::Trust { host, fingerprint } => trust(&client, &host, fingerprint, json).await?,
         Command::Disconnect { host } => {
@@ -239,8 +276,19 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Command::Audit {
             host,
             client: client_name,
+            min_risk,
             limit,
-        } => audit(&client, host, client_name, limit, json).await?,
+        } => {
+            audit(
+                &client,
+                host,
+                client_name,
+                min_risk.map(Into::into),
+                limit,
+                json,
+            )
+            .await?
+        }
         Command::Watch { host } => watch(&client, host, json).await?,
         Command::Call { method, params } => {
             let params = match params {
@@ -362,8 +410,26 @@ async fn hosts(client: &Client, json: bool) -> Result<()> {
     Ok(())
 }
 
-async fn exec(client: &Client, params: ExecParams, json: bool) -> Result<ExitCode> {
+async fn exec(client: &Client, params: ExecParams, json: bool, waits: bool) -> Result<ExitCode> {
     let timeout_ms = params.timeout_ms;
+    if waits && !json {
+        let check = json!({ "method": method::EXEC_RUN, "params": &params });
+        if let Ok(check) = client
+            .call_as::<PolicyCheck>(method::POLICY_CHECK, check)
+            .await
+            && check.decision == Decision::Approve
+        {
+            eprintln!(
+                "hostlane: {} needs approval ({}); waiting for an answer in the Hostlane app…",
+                policy::label(check.risk),
+                check
+                    .reasons
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or("policy rule")
+            );
+        }
+    }
     let result: ExecResult = client
         .call_as(method::EXEC_RUN, serde_json::to_value(&params)?)
         .await?;
@@ -382,6 +448,10 @@ async fn exec(client: &Client, params: ExecParams, json: bool) -> Result<ExitCod
         );
     }
     let code = match result.status {
+        ExecStatus::Cancelled => {
+            eprintln!("hostlane: the command was terminated by the emergency stop");
+            130
+        }
         ExecStatus::TimedOut => {
             let secs = timeout_ms.unwrap_or(120_000) as f64 / 1000.0;
             eprintln!("hostlane: the command timed out after {secs}s and was stopped");
@@ -567,10 +637,11 @@ fn exec_outcome(record: &ExecRecord) -> String {
         ExecStatus::TimedOut => "timed out".into(),
         ExecStatus::Failed => "failed".into(),
         ExecStatus::Interrupted => "interrupted".into(),
+        ExecStatus::Cancelled => "cancelled".into(),
     }
 }
 
-fn one_line(text: &str, max: usize) -> String {
+pub(crate) fn one_line(text: &str, max: usize) -> String {
     let line = text.lines().next().unwrap_or_default();
     let mut out: String = line.chars().take(max).collect();
     if line.chars().count() > max || text.lines().nth(1).is_some() {
@@ -621,12 +692,14 @@ async fn audit(
     client: &Client,
     host: Option<String>,
     client_name: Option<String>,
+    min_risk: Option<hostlane_protocol::Risk>,
     limit: u32,
     json: bool,
 ) -> Result<()> {
     let params = AuditListParams {
         host,
         client: client_name,
+        min_risk,
         limit: Some(limit),
         ..Default::default()
     };
@@ -641,7 +714,7 @@ async fn audit(
         println!("The audit log is empty.");
         return Ok(());
     }
-    let rows: Vec<[String; 6]> = list
+    let rows: Vec<[String; 7]> = list
         .entries
         .iter()
         .map(|e| {
@@ -672,18 +745,25 @@ async fn audit(
                         .map(str::to_owned)
                 })
                 .unwrap_or_default();
+            let outcome = match &e.approver {
+                Some(approver) => format!("{outcome} ({approver})"),
+                None => outcome,
+            };
             [
                 ago(e.started_at),
                 e.client.name.clone(),
                 e.host.clone().unwrap_or_else(|| "-".into()),
                 e.method.clone(),
+                e.risk.map(policy::label).unwrap_or_else(|| "-".into()),
                 outcome,
                 detail,
             ]
         })
         .collect();
     print_table(
-        ["WHEN", "CLIENT", "HOST", "METHOD", "OUTCOME", "DETAIL"],
+        [
+            "WHEN", "CLIENT", "HOST", "METHOD", "RISK", "OUTCOME", "DETAIL",
+        ],
         &rows,
     );
     if list.has_more {
@@ -706,7 +786,10 @@ async fn watch(client: &Client, host: Option<String>, json: bool) -> Result<()> 
             Event::FileChanged { change } => Some(change.host.clone()),
             Event::AuditAppended { entry } => entry.host.clone(),
             Event::Tunnel { tunnel } => Some(tunnel.host.clone()),
-            Event::TunnelRemoved { .. } | Event::Lagged { .. } => None,
+            Event::ApprovalRequested { approval } | Event::ApprovalUpdated { approval } => {
+                approval.host.clone()
+            }
+            Event::TunnelRemoved { .. } | Event::Lagged { .. } | Event::Policy { .. } => None,
         };
         if let (Some(filter), Some(event_host)) = (&host, &event_host)
             && filter != event_host
@@ -741,10 +824,25 @@ async fn watch(client: &Client, host: Option<String>, json: bool) -> Result<()> 
                     .unwrap_or_default();
                 println!("[{}] {}{duration}", exec.host, exec_outcome(&exec));
             }
+            Event::ApprovalRequested { approval } => {
+                println!(
+                    "[{}] {} needs approval ({}): {} · {}",
+                    approval.host.as_deref().unwrap_or("-"),
+                    approval.client.name,
+                    policy::label(approval.risk),
+                    approval.summary,
+                    approval.id
+                );
+            }
+            Event::Policy { status } if status.stopped => {
+                println!("(emergency stop is on)");
+            }
             Event::Connection { .. }
             | Event::AuditAppended { .. }
             | Event::Tunnel { .. }
-            | Event::TunnelRemoved { .. } => {}
+            | Event::TunnelRemoved { .. }
+            | Event::ApprovalUpdated { .. }
+            | Event::Policy { .. } => {}
             Event::FileChanged { change } => {
                 let what = if change.deleted {
                     "removed".to_string()
@@ -835,7 +933,7 @@ async fn daemon_start(client: &Client, socket: Option<PathBuf>, json: bool) -> R
 }
 
 /// "12s ago", "5m ago", "3h ago", "2d ago".
-fn ago(unix_ms: u64) -> String {
+pub(crate) fn ago(unix_ms: u64) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -856,7 +954,7 @@ fn kind_name(kind: ErrorKind) -> String {
         .unwrap_or_else(|| "ERROR".into())
 }
 
-fn output_value(json: bool, value: Value, text: &str) {
+pub(crate) fn output_value(json: bool, value: Value, text: &str) {
     if json {
         print_json(&value);
     } else {

@@ -2,8 +2,11 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use hostlane_protocol::{ClientInfo, Event, Notification, Request, Response, RpcError, method};
+use hostlane_protocol::{
+    Approval, ClientInfo, ErrorKind, Event, Notification, Request, Response, RpcError, method,
+};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -20,9 +23,23 @@ pub enum ClientError {
     Rpc(#[from] RpcError),
 }
 
+/// What a person answered when asked about an approval in the client itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Answer {
+    Approve,
+    Deny,
+    /// Leave it to the Hostlane app (or `hostlane approve`) and wait.
+    Wait,
+}
+
+/// Asks a person about a call that needs approval; runs on a blocking thread.
+pub type Approver = Arc<dyn Fn(&Approval) -> Answer + Send + Sync>;
+
 pub struct Client {
     socket_path: PathBuf,
     info: Option<ClientInfo>,
+    approval: serde_json::Map<String, Value>,
+    approver: Option<Approver>,
 }
 
 /// An open `events.subscribe` connection.
@@ -57,7 +74,23 @@ impl Client {
         Self {
             socket_path: socket_path.into(),
             info: None,
+            approval: serde_json::Map::new(),
+            approver: None,
         }
+    }
+
+    /// Lets a person at this client decide approvals for its own calls (an interactive
+    /// CLI), instead of only waiting for the app. Ignored with `async` or `ticket_id`.
+    pub fn with_approver(mut self, approver: Approver) -> Self {
+        self.approver = Some(approver);
+        self
+    }
+
+    /// Approval options (`ticket_id`, `async`, `approval_timeout_secs`) added to the
+    /// params of every call the policy checks (see [`method::GATED`]).
+    pub fn with_approval(mut self, options: serde_json::Map<String, Value>) -> Self {
+        self.approval = options;
+        self
     }
 
     /// Identifies this client in the audit log and session monitor.
@@ -66,7 +99,14 @@ impl Client {
         self
     }
 
-    fn request(&self, method: &str, params: Value) -> Result<String, ClientError> {
+    fn request(&self, method: &str, mut params: Value) -> Result<String, ClientError> {
+        if method::GATED.contains(&method)
+            && let Some(object) = params.as_object_mut()
+        {
+            for (key, value) in &self.approval {
+                object.entry(key.clone()).or_insert_with(|| value.clone());
+            }
+        }
         let mut request = Request::new(1, method, params);
         request.client = self.info.clone();
         serde_json::to_string(&request).map_err(|e| ClientError::Protocol(e.to_string()))
@@ -78,6 +118,68 @@ impl Client {
 
     /// Sends one request on a fresh connection and returns the raw `result`.
     pub async fn call(&self, method: &str, params: Value) -> Result<Value, ClientError> {
+        match &self.approver {
+            Some(approver)
+                if method::GATED.contains(&method)
+                    && !self.approval.contains_key("async")
+                    && !self.approval.contains_key("ticket_id") =>
+            {
+                self.call_asking(method, params, approver.clone()).await
+            }
+            _ => self.call_once(method, params).await,
+        }
+    }
+
+    async fn call_asking(
+        &self,
+        method: &str,
+        params: Value,
+        approver: Approver,
+    ) -> Result<Value, ClientError> {
+        let with = |key: &str, value: Value| {
+            let mut params = params.clone();
+            if let Some(object) = params.as_object_mut() {
+                object.insert(key.into(), value);
+            }
+            params
+        };
+        let error = match self
+            .call_once(method, with("async", Value::Bool(true)))
+            .await
+        {
+            Err(ClientError::Rpc(error)) if error.data.kind == ErrorKind::ApprovalRequired => error,
+            other => return other,
+        };
+        let Some(ticket) = error
+            .data
+            .details
+            .as_ref()
+            .and_then(|d| d.get("ticket_id"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        else {
+            return Err(error.into());
+        };
+        let approval = self
+            .call_once(method::APPROVALS_GET, serde_json::json!({ "id": ticket }))
+            .await?;
+        let approval: Approval =
+            serde_json::from_value(approval).map_err(|e| ClientError::Protocol(e.to_string()))?;
+        let answer = tokio::task::spawn_blocking(move || approver(&approval))
+            .await
+            .unwrap_or(Answer::Wait);
+        if answer != Answer::Wait {
+            self.call_once(
+                method::APPROVALS_RESOLVE,
+                serde_json::json!({ "id": ticket, "approve": answer == Answer::Approve }),
+            )
+            .await?;
+        }
+        self.call_once(method, with("ticket_id", Value::String(ticket)))
+            .await
+    }
+
+    async fn call_once(&self, method: &str, params: Value) -> Result<Value, ClientError> {
         let line = self.request(method, params)?;
         let reply = self.round_trip(&line).await?;
         let response: Response =

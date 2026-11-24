@@ -2,6 +2,7 @@
 import type { AuditOutcome } from "./AuditOutcome";
 import type { ClientInfo } from "./ClientInfo";
 import type { ErrorKind } from "./ErrorKind";
+import type { Risk } from "./Risk";
 
 /**
  * One audited call. The log is append-only.
@@ -16,6 +17,11 @@ params: unknown, outcome: AuditOutcome, error_kind?: ErrorKind, error_message?: 
  */
 result: unknown, 
 /**
- * Who approved the call (M5).
+ * Who let the call through when the policy asked for approval: `desktop`, `cli`,
+ * `rule <id>` or `session grant`.
  */
-approver?: string, };
+approver?: string, 
+/**
+ * Risk assessed by the policy, for calls that touch a server.
+ */
+risk?: Risk, };

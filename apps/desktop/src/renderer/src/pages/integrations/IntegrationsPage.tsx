@@ -24,6 +24,16 @@ const cliCommands: [command: string, description: string][] = [
   ['hostlane --json tunnels', '列出隧道、状态和流量'],
   ['hostlane tunnel close --session <id>', '关闭某个会话创建的全部临时隧道'],
   ['hostlane trust <host>', '核对并信任主机指纹（需要人确认）'],
+  [
+    'hostlane --json policy check <host> <command>',
+    '预先查看命令的风险等级，以及会被允许、审批还是拒绝'
+  ],
+  ['hostlane --async --json exec <host> -- <command>', '需要审批时立即返回 ticket_id，不阻塞等待'],
+  [
+    'hostlane --ticket <ticket_id> --json exec <host> -- <command>',
+    '用 ticket_id 重试同一调用，等待或使用审批结果'
+  ],
+  ['hostlane stop', '急停：拒绝所有 agent 调用并关闭 agent 隧道（hostlane resume 恢复）'],
   ['hostlane watch', '在终端里实时查看所有命令和输出'],
   ["hostlane --json call <method> '<params>'", '直接调用任意 JSON-RPC 方法'],
   ['hostlane daemon start', '在后台启动守护进程']
@@ -42,6 +52,8 @@ const agentsSnippet = `## 远程服务器
 - 需要在本机访问服务器上的服务时，用 \`hostlane --json tunnel open <host> <port>\` 建立隧道，使用返回的 \`tunnel.url\`；用完后 \`hostlane tunnel close <id>\`，会话结束时运行 \`hostlane tunnel close --session <会话 ID>\`。不要绑定 0.0.0.0，除非用户明确要求。
 - 命令都加 \`--json\`；失败时读取 error.kind 和 error.hint 决定下一步。
 - 遇到 HOST_KEY_UNKNOWN 或 HOST_KEY_CHANGED 时停下来告诉用户，不要自行信任主机密钥。
+- 高风险操作（sudo、重启服务、删除目录等）需要用户在 Hostlane 中审批，命令会阻塞等待（默认 120 秒）。不想阻塞时加 \`--async\`：返回 APPROVAL_REQUIRED 和 error.details.ticket_id，告诉用户后用 \`--ticket <ticket_id>\` 重试完全相同的命令。可以先用 \`hostlane --json policy check <host> <command>\` 查看风险。
+- 遇到 POLICY_DENIED 时不要换个写法绕过；按 error.hint 告诉用户。不要运行 \`hostlane approve\`、\`deny\`、\`resume\` 或 \`policy add\`，这些只能由用户执行。
 - 设置 \`HOSTLANE_CLIENT=<agent 名称>\` 和 \`HOSTLANE_SESSION=<会话 ID>\`，审计和会话页会按它们区分来源。`
 
 export function IntegrationsPage() {

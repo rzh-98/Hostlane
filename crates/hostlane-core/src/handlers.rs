@@ -1,11 +1,13 @@
 //! One function per JSON-RPC method. Handlers return a JSON value or a typed error;
 //! framing and request parsing live in `server.rs`. Calls that touch a server are
-//! appended to the audit log.
+//! appended to the audit log, after the policy has let them through.
 
 use hostlane_protocol::{
-    AuditEntry, AuditListParams, AuditOutcome, ClientInfo, ConnectionsList, ErrorKind, Event,
-    ExecList, ExecListParams, ExecParams, FileChangeParams, HostParams, HostsList, RpcError,
-    TrustParams, TrustResult, TunnelParams, method,
+    ApprovalsList, ApprovalsListParams, AuditEntry, AuditListParams, AuditOutcome, ClientInfo,
+    ConnectionsList, Decision, ErrorKind, Event, ExecList, ExecListParams, ExecParams,
+    FileChangeParams, HostLabelParams, HostParams, HostsList, IdParams, PolicyCheck,
+    PolicyCheckParams, PolicyRules, PolicyStopParams, PolicyStopped, Risk, RpcError, TrustParams,
+    TrustResult, TunnelParams, method,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -14,53 +16,55 @@ use serde_json::{Value, json};
 use crate::Daemon;
 use crate::exec;
 use crate::files;
+use crate::policy::{self, GateOptions, require_person};
 use crate::ports;
 use crate::ssh::Trust;
 use crate::store::NewCall;
 use crate::util::{now_ms, sha256_hex};
 
-/// Methods recorded in the audit log.
-const AUDITED: &[&str] = &[
-    method::HOSTS_CONNECT,
-    method::HOSTS_DISCONNECT,
-    method::HOSTS_TRUST,
-    method::EXEC_RUN,
-    method::FILES_READ,
-    method::FILES_LIST,
-    method::FILES_SEARCH,
-    method::FILES_WRITE,
-    method::FILES_PATCH,
-    method::FILES_UPLOAD,
-    method::FILES_DOWNLOAD,
-    method::FILES_REVERT,
-    method::PORTS_LIST,
-    method::PORTS_INSPECT,
-    method::PORTS_CHECK,
-    method::PORTS_FIND_FREE,
-    method::PORTS_ANNOTATE,
-    method::TUNNELS_OPEN,
-    method::TUNNELS_CLOSE,
-    method::TUNNELS_START,
-    method::TUNNELS_UPDATE,
-    method::TUNNELS_DELETE,
+/// Policy changes, recorded in the audit log along with the gated methods.
+const POLICY_CHANGES: &[&str] = &[
+    method::HOSTS_LABEL,
+    method::APPROVALS_RESOLVE,
+    method::POLICY_STOP,
+    method::POLICY_RESUME,
+    method::POLICY_RULES_ADD,
+    method::POLICY_RULES_DELETE,
 ];
 
 pub(crate) async fn dispatch(
     daemon: &Daemon,
     client: &ClientInfo,
     name: &str,
-    params: Value,
+    mut params: Value,
 ) -> Result<Value, RpcError> {
-    if !AUDITED.contains(&name) {
-        return run(daemon, client, name, params).await;
+    let gated = method::GATED.contains(&name);
+    if !gated && !POLICY_CHANGES.contains(&name) {
+        return run(daemon, client, name, params, None).await;
     }
+    let options = if gated {
+        GateOptions::take(&mut params)?
+    } else {
+        GateOptions::default()
+    };
     let started_at = now_ms();
     let host = params
         .get("host")
         .and_then(Value::as_str)
         .map(str::to_owned);
     let recorded_params = redact_params(&params);
-    let result = run(daemon, client, name, params).await;
+    let (risk, approver, result) = if gated {
+        let gate = policy::authorize(daemon, client, name, &params, options).await;
+        match gate.result {
+            Ok(approver) => {
+                let result = run(daemon, client, name, params, approver.clone()).await;
+                (gate.risk, approver, result)
+            }
+            Err(err) => (gate.risk, None, Err(err)),
+        }
+    } else {
+        (None, None, run(daemon, client, name, params, None).await)
+    };
     let host = host.or_else(|| {
         let value = result.as_ref().ok()?;
         let host = value
@@ -86,6 +90,8 @@ pub(crate) async fn dispatch(
         outcome,
         error,
         result: summary,
+        approver,
+        risk,
     };
     let entry = call.entry(0);
     match daemon.store.append_call(call).await {
@@ -99,7 +105,7 @@ pub(crate) async fn dispatch(
 
 /// Audited params: file content and edits are replaced by their size; the diff of a
 /// change is kept in the `file_changes` table instead.
-fn redact_params(params: &Value) -> Value {
+pub(crate) fn redact_params(params: &Value) -> Value {
     let mut params = exec::redact_params(params);
     let Some(object) = params.as_object_mut() else {
         return params;
@@ -151,6 +157,7 @@ async fn run(
     client: &ClientInfo,
     name: &str,
     params: Value,
+    approver: Option<String>,
 ) -> Result<Value, RpcError> {
     match name {
         method::DAEMON_STATUS => to_value(daemon.status()),
@@ -217,7 +224,7 @@ async fn run(
         method::EXEC_RUN => {
             let params: ExecParams = parse(params)?;
             let (entry, loaded) = daemon.resolve_host(&params.host).await?;
-            to_value(exec::run(daemon, client, params, &entry, &loaded).await?)
+            to_value(exec::run(daemon, client, params, &entry, &loaded, approver).await?)
         }
         method::EXEC_LIST => {
             let params: ExecListParams = parse_or_default(params)?;
@@ -257,6 +264,94 @@ async fn run(
         method::TUNNELS_DELETE => {
             let params: TunnelParams = parse(params)?;
             to_value(daemon.tunnels.delete(&params.id).await?)
+        }
+        method::HOSTS_LABEL => {
+            require_person(client, "change host labels")?;
+            let params: HostLabelParams = parse(params)?;
+            daemon.resolve_host(&params.host).await?;
+            let mut tags: Vec<String> = Vec::new();
+            for tag in params.tags.iter().map(|t| t.trim()) {
+                if !tag.is_empty() && !tags.iter().any(|t| t == tag) {
+                    tags.push(tag.to_string());
+                }
+            }
+            daemon
+                .store
+                .set_host_labels(params.host.clone(), params.env, tags)
+                .await?;
+            let loaded = daemon.load_hosts().await?;
+            let host = loaded
+                .find(&params.host)
+                .map(|entry| entry.host.clone())
+                .ok_or_else(|| RpcError::new(ErrorKind::HostNotFound, "host vanished"))?;
+            to_value(host)
+        }
+        method::APPROVALS_LIST => {
+            let params: ApprovalsListParams = parse_or_default(params)?;
+            to_value(ApprovalsList {
+                approvals: daemon.policy.approvals().list(params.pending_only),
+            })
+        }
+        method::APPROVALS_GET => {
+            let params: IdParams = parse(params)?;
+            let approval = daemon.policy.approvals().get(&params.id).ok_or_else(|| {
+                RpcError::new(
+                    ErrorKind::ApprovalNotFound,
+                    format!("no approval `{}`", params.id),
+                )
+            })?;
+            to_value(approval)
+        }
+        method::APPROVALS_RESOLVE => {
+            require_person(client, "decide approvals")?;
+            to_value(daemon.policy.resolve(parse(params)?, client).await?)
+        }
+        method::POLICY_STATUS => to_value(daemon.policy.status()),
+        method::POLICY_STOP => {
+            let params: PolicyStopParams = parse_or_default(params)?;
+            let denied_approvals = daemon.policy.stop(client, params.reason).await?;
+            let closed_tunnels = daemon.tunnels.close_agent_tunnels().await;
+            to_value(PolicyStopped {
+                status: daemon.policy.status(),
+                closed_tunnels,
+                denied_approvals,
+            })
+        }
+        method::POLICY_RESUME => {
+            require_person(client, "resume after an emergency stop")?;
+            to_value(daemon.policy.resume().await?)
+        }
+        method::POLICY_CHECK => {
+            let mut params: PolicyCheckParams = parse(params)?;
+            if !method::GATED.contains(&params.method.as_str()) {
+                return to_value(PolicyCheck {
+                    decision: Decision::Allow,
+                    risk: Risk::L0,
+                    reasons: Vec::new(),
+                    matched: "not gated".into(),
+                    stopped: false,
+                });
+            }
+            GateOptions::take(&mut params.params)?;
+            to_value(policy::check(daemon, client, params).await)
+        }
+        method::POLICY_RULES_LIST => to_value(PolicyRules {
+            rules: daemon.policy.rules(),
+        }),
+        method::POLICY_RULES_ADD => {
+            require_person(client, "change policy rules")?;
+            to_value(
+                daemon
+                    .policy
+                    .add_rule(parse(params)?, client.name.clone())
+                    .await?,
+            )
+        }
+        method::POLICY_RULES_DELETE => {
+            require_person(client, "change policy rules")?;
+            let params: IdParams = parse(params)?;
+            daemon.policy.delete_rule(&params.id).await?;
+            Ok(json!({ "deleted": params.id }))
         }
         method::AUDIT_LIST => {
             let params: AuditListParams = parse_or_default(params)?;

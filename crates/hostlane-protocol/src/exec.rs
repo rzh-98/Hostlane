@@ -44,6 +44,8 @@ pub enum ExecStatus {
     Failed,
     /// The daemon stopped while the command was running.
     Interrupted,
+    /// Terminated by the emergency stop.
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -85,6 +87,10 @@ pub struct ExecRecord {
     pub stdout_bytes: u64,
     #[ts(type = "number")]
     pub stderr_bytes: u64,
+    /// Who approved the command, when the policy asked for approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub approver: Option<String>,
 }
 
 /// Result of `exec.run`. A non-zero exit code or a timeout is a result, not an error.

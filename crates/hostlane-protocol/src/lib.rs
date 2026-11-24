@@ -11,6 +11,7 @@ mod events;
 mod exec;
 mod files;
 mod hosts;
+mod policy;
 mod ports;
 mod rpc;
 mod status;
@@ -32,6 +33,12 @@ pub use files::{
 pub use hosts::{
     Connection, ConnectionState, ConnectionsList, Host, HostEnv, HostKeyInfo, HostParams,
     HostSource, HostsList, TrustParams, TrustResult,
+};
+pub use policy::{
+    Approval, ApprovalResolveParams, ApprovalScope, ApprovalState, ApprovalsList,
+    ApprovalsListParams, Decision, HostLabelParams, IdParams, PolicyCheck, PolicyCheckParams,
+    PolicyRule, PolicyRuleAddParams, PolicyRules, PolicyStatus, PolicyStopParams, PolicyStopped,
+    Risk, RuleConditions,
 };
 pub use ports::{
     BindScope, FindFreeParams, FreePorts, HttpProbe, ListeningPort, PortAnnotateParams,
@@ -56,6 +63,7 @@ pub mod method {
     pub const HOSTS_CONNECT: &str = "hosts.connect";
     pub const HOSTS_DISCONNECT: &str = "hosts.disconnect";
     pub const HOSTS_TRUST: &str = "hosts.trust";
+    pub const HOSTS_LABEL: &str = "hosts.label";
     pub const CONNECTIONS_LIST: &str = "connections.list";
     pub const EXEC_RUN: &str = "exec.run";
     pub const EXEC_LIST: &str = "exec.list";
@@ -80,12 +88,50 @@ pub mod method {
     pub const TUNNELS_START: &str = "tunnels.start";
     pub const TUNNELS_UPDATE: &str = "tunnels.update";
     pub const TUNNELS_DELETE: &str = "tunnels.delete";
+    pub const APPROVALS_LIST: &str = "approvals.list";
+    pub const APPROVALS_GET: &str = "approvals.get";
+    pub const APPROVALS_RESOLVE: &str = "approvals.resolve";
+    pub const POLICY_STATUS: &str = "policy.status";
+    pub const POLICY_STOP: &str = "policy.stop";
+    pub const POLICY_RESUME: &str = "policy.resume";
+    pub const POLICY_CHECK: &str = "policy.check";
+    pub const POLICY_RULES_LIST: &str = "policy.rules.list";
+    pub const POLICY_RULES_ADD: &str = "policy.rules.add";
+    pub const POLICY_RULES_DELETE: &str = "policy.rules.delete";
     pub const AUDIT_LIST: &str = "audit.list";
     /// Keeps the connection open and streams `event` notifications.
     pub const EVENTS_SUBSCRIBE: &str = "events.subscribe";
 
     /// Notification method used for pushed events.
     pub const EVENT_NOTIFICATION: &str = "event";
+
+    /// Methods checked by the policy before they run. Their params also accept
+    /// `ticket_id` (retry after approval), `async` (return `APPROVAL_REQUIRED` instead
+    /// of waiting) and `approval_timeout_secs` (how long to wait, default 120).
+    pub const GATED: &[&str] = &[
+        HOSTS_CONNECT,
+        HOSTS_DISCONNECT,
+        HOSTS_TRUST,
+        EXEC_RUN,
+        FILES_READ,
+        FILES_LIST,
+        FILES_SEARCH,
+        FILES_WRITE,
+        FILES_PATCH,
+        FILES_UPLOAD,
+        FILES_DOWNLOAD,
+        FILES_REVERT,
+        PORTS_LIST,
+        PORTS_INSPECT,
+        PORTS_CHECK,
+        PORTS_FIND_FREE,
+        PORTS_ANNOTATE,
+        TUNNELS_OPEN,
+        TUNNELS_CLOSE,
+        TUNNELS_START,
+        TUNNELS_UPDATE,
+        TUNNELS_DELETE,
+    ];
 
     /// Every method the daemon currently implements.
     pub const ALL: &[&str] = &[
@@ -95,6 +141,7 @@ pub mod method {
         HOSTS_CONNECT,
         HOSTS_DISCONNECT,
         HOSTS_TRUST,
+        HOSTS_LABEL,
         CONNECTIONS_LIST,
         EXEC_RUN,
         EXEC_LIST,
@@ -119,6 +166,16 @@ pub mod method {
         TUNNELS_START,
         TUNNELS_UPDATE,
         TUNNELS_DELETE,
+        APPROVALS_LIST,
+        APPROVALS_GET,
+        APPROVALS_RESOLVE,
+        POLICY_STATUS,
+        POLICY_STOP,
+        POLICY_RESUME,
+        POLICY_CHECK,
+        POLICY_RULES_LIST,
+        POLICY_RULES_ADD,
+        POLICY_RULES_DELETE,
         AUDIT_LIST,
         EVENTS_SUBSCRIBE,
     ];

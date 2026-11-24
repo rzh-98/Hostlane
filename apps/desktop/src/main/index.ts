@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron'
 import { IpcChannel, RENDERER_METHODS, type ThemeSource } from '../shared/ipc'
+import { handlePolicyEvent } from './approvals'
 import { callDaemon, ensureDaemon, startDaemon, subscribeEvents } from './daemon'
 import { createMainWindow, trafficLightPosition, windowBackground } from './window'
 
@@ -51,6 +52,7 @@ if (!app.requestSingleInstanceLock()) {
     createMainWindow()
     void ensureDaemon()
     const unsubscribe = subscribeEvents((event) => {
+      handlePolicyEvent(event)
       for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed()) win.webContents.send(IpcChannel.hostlaneEvent, event)
       }

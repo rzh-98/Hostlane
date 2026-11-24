@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use hostlane_protocol::{
-    ErrorKind, Event, Notification, Request, Response, RpcError, Subscribed, method,
+    ClientInfo, ErrorKind, Event, Notification, Request, Response, RpcError, Subscribed, method,
 };
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
@@ -65,6 +65,7 @@ pub async fn handle_line(daemon: &Daemon, line: &str) -> String {
 /// Streams events until the client hangs up. The client sends nothing more.
 async fn subscribe<R, W>(
     daemon: &Daemon,
+    client: Option<ClientInfo>,
     id: Value,
     reader: &mut R,
     writer: &mut W,
@@ -74,6 +75,10 @@ where
     W: AsyncWrite + Unpin,
 {
     let mut events = daemon.events.subscribe();
+    let _listener = client
+        .as_ref()
+        .filter(|client| crate::policy::is_desktop(client))
+        .map(|_| daemon.policy.desktop_listener());
     let ack = serde_json::to_value(Subscribed { subscribed: true }).unwrap_or(Value::Null);
     write_line(writer, &to_line(&Response::ok(id, ack))).await?;
     let mut sink = [0u8; 256];
@@ -126,7 +131,14 @@ where
         }
         let response = match parse_request(trimmed) {
             Ok(request) if request.method == method::EVENTS_SUBSCRIBE => {
-                return subscribe(&daemon, request.id, &mut reader, &mut writer).await;
+                return subscribe(
+                    &daemon,
+                    request.client,
+                    request.id,
+                    &mut reader,
+                    &mut writer,
+                )
+                .await;
             }
             Ok(request) => handle_request(&daemon, request).await,
             Err(response) => *response,

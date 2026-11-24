@@ -4,7 +4,7 @@
   <p>An SSH runtime for the agent you already use. Let Codex, Claude Code or your own agent run commands, edit files, open tunnels and manage web-service ports on remote servers — from your machine, with fingerprint checks, approvals and an audit trail.</p>
   <p>No built-in LLM. Nothing to install on the server: <code>sshd</code> is enough.</p>
   <p>
-    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M4)-orange" />
+    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M5)-orange" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -21,7 +21,7 @@
 </div>
 
 > [!WARNING]
-> Hostlane is in early development. M0–M4 work today: the daemon, CLI, `~/.ssh/config` import, a pooled SSH client with host key checks, `exec`, the session monitor, the audit log, file operations (read, list, search, hash-checked atomic edits, upload, download, revert) and ports (discovery, process/systemd/Docker mapping, HTTP/HTTPS probing with certificate expiry, notes, free-port lookup) and tunnels (local forwarding with conflict detection, saved tunnels restored on start, auto-reconnect, expiring agent tunnels). Approvals and MCP arrive in M5–M6. See the [roadmap](#roadmap).
+> Hostlane is in early development. M0–M5 work today: the daemon, CLI, `~/.ssh/config` import, a pooled SSH client with host key checks, `exec`, the session monitor, the audit log, file operations (read, list, search, hash-checked atomic edits, upload, download, revert) and ports (discovery, process/systemd/Docker mapping, HTTP/HTTPS probing with certificate expiry, notes, free-port lookup) and tunnels (local forwarding with conflict detection, saved tunnels restored on start, auto-reconnect, expiring agent tunnels) and policy (command risk levels, rules, blocking or async approvals with diffs, emergency stop). MCP and packaging arrive in M6. See the [roadmap](#roadmap).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -128,7 +128,12 @@ Every command accepts `--json`. On success, the result goes to stdout; on failur
 | `hostlane connections`                                                             | Show connection state, latency, open channels and host keys                                   |
 | `hostlane watch [--host H]`                                                        | Follow every command agents run, with live output (read-only)                                 |
 | `hostlane history`                                                                 | Recent commands                                                                               |
-| `hostlane audit [--host H] [--client C]`                                           | Show the audit log                                                                            |
+| `hostlane audit [--host H] [--client C] [--min-risk L2]`                           | Show the audit log with each call's risk and approver                                         |
+| `hostlane approvals [--all]` / `approval <id>`                                     | List calls waiting for approval, or show one with its command or diff, risk and reasons       |
+| `hostlane approve <id> [--scope once\|session\|always]` / `deny <id> [--note T]`   | Decide a waiting call (people only; `always` adds an allow rule)                              |
+| `hostlane stop [--reason T]` / `resume`                                            | Emergency stop: refuse agent calls, stop their commands and close their tunnels; then lift it |
+| `hostlane label <host> [--env prod] [--tag T]… [--clear]`                          | Set a host's environment and tags, which rules and defaults use                               |
+| `hostlane policy status` / `add` / `delete` / `check <host> <cmd>`                 | Show or change rules, or see a command's risk and what the policy would do                    |
 | `hostlane call <method> '<params>'`                                                | Send a raw JSON-RPC call to the daemon                                                        |
 | `hostlane daemon start` / `stop`                                                   | Start the daemon in the background, or ask it to exit                                         |
 | `hostlane daemon run`                                                              | Run the daemon in the foreground                                                              |
@@ -144,6 +149,7 @@ Every command accepts `--json`. On success, the result goes to stdout; on failur
 | `HOSTLANE_BIN`        | The `hostlane` binary used by the desktop app                                       |
 | `HOSTLANE_CLIENT`     | Caller name for CLI calls (default `cli`), shown in the audit log and Sessions page |
 | `HOSTLANE_SESSION`    | Agent session ID; the Sessions page groups by it                                    |
+| `HOSTLANE_NOTIFY`     | `0` stops the daemon's own system notifications for approvals                       |
 
 To try things without touching your real setup, point all of them at a temporary directory:
 
@@ -171,6 +177,8 @@ Operate servers through the `hostlane` CLI; do not run ssh directly.
 - To reach a server's service from this machine, run `hostlane --json tunnel open <host> <port>` and use the returned `tunnel.url`. Close it with `hostlane tunnel close <id>` when done, and run `hostlane tunnel close --session <session id>` when the session ends. Never bind 0.0.0.0 unless the user asks for it.
 - Always pass `--json`; on failure, read error.kind and error.hint to decide the next step.
 - On HOST_KEY_UNKNOWN or HOST_KEY_CHANGED, stop and tell the user; never trust a host key yourself.
+- Risky operations (sudo, restarting services, deleting directories…) wait for the user's approval in Hostlane, for up to 120 seconds. To avoid blocking, add `--async`: you get APPROVAL_REQUIRED with error.details.ticket_id; tell the user, then repeat the exact same command with `--ticket <ticket_id>`. `hostlane --json policy check <host> <command>` shows a command's risk beforehand.
+- On POLICY_DENIED, do not rephrase the command to get around it; tell the user what error.hint says. Never run `hostlane approve`, `deny`, `resume` or `policy add`: those are for the user.
 - Set `HOSTLANE_CLIENT=<agent name>` and `HOSTLANE_SESSION=<session id>` so the audit log and Sessions page can tell callers apart.
 ```
 
@@ -185,8 +193,8 @@ The desktop app's Integrations page has the same snippet with a copy button. In 
 | **M2** Files              | `read_file`, `list_dir`, `search`, `apply_patch`, `write_file`                               | ✅ Done |
 | **M3** Ports              | Port discovery, process mapping, HTTP probing, port notes, free-port lookup                  | ✅ Done |
 | **M4** Tunnels            | Local forwarding, saved tunnels, auto-reconnect, conflict detection, temporary agent tunnels | ✅ Done |
-| **M5** Policy             | Risk levels, rules, blocking approvals, global stop                                          | Next    |
-| **M6** MCP & distribution | `hostlane mcp`, Integrations page, user-level service registration, bundled binary           | Planned |
+| **M5** Policy             | Risk levels, rules, blocking approvals, global stop                                          | ✅ Done |
+| **M6** MCP & distribution | `hostlane mcp`, Integrations page, user-level service registration, bundled binary           | Next    |
 
 The full requirement list, with IDs and priorities, is in [docs/requirements.md](docs/requirements.md) (Chinese).
 
@@ -196,7 +204,7 @@ The full requirement list, with IDs and priorities, is in [docs/requirements.md]
 ├─ Cargo.toml                  Rust workspace
 ├─ crates/
 │  ├─ hostlane-protocol/       Wire types: JSON-RPC frames, error codes, method params and results
-│  ├─ hostlane-core/           Daemon: socket server, SSH pool, exec, files (SFTP), ports, tunnels, audit (SQLite), client
+│  ├─ hostlane-core/           Daemon: socket server, SSH pool, exec, files (SFTP), ports, tunnels, policy and approvals, audit (SQLite), client
 │  └─ hostlane-cli/            The `hostlane` binary: CLI + `daemon` subcommands
 ├─ apps/desktop/               Electron app, based on Desktop-Starter
 │  └─ src/
@@ -231,6 +239,8 @@ npx prettier --write src
 - SSH keys, passwords and audit data stay on your machine. Credentials never reach the renderer process and are never logged.
 - A person must verify and trust a host key on first connection. A changed key blocks the connection, and neither agents nor `hosts.trust` can override it. Hostlane writes only its own `known_hosts` and never touches `~/.ssh/known_hosts`.
 - The audit log is append-only: database triggers reject updates and deletes.
+- Every call that touches a server is classified by risk and checked against your rules before it runs. Calls from the desktop app are always allowed; the CLI is treated like an agent, but in a terminal it asks you directly.
+- Caller names (`HOSTLANE_CLIENT`) are declared by the client, not authenticated. The policy keeps a well-behaved agent from making mistakes; it is not a sandbox against code running as your user.
 - Authentication uses ssh-agent or unencrypted key files; `ssh-add` passphrase-protected keys first. Password login is not supported yet.
 - The renderer runs sandboxed and can call only an explicit allowlist of daemon methods.
 - Hostlane sends no telemetry and talks to nothing except your servers.

@@ -9,4 +9,8 @@ export type ExecRecord = {
 /**
  * Also the `output_id` for `output.read`.
  */
-id: string, host: string, command: string, cwd?: string, client: ClientInfo, status: ExecStatus, started_at: number, finished_at?: number, exit_code?: number, signal?: string, error?: string, stdout_bytes: number, stderr_bytes: number, };
+id: string, host: string, command: string, cwd?: string, client: ClientInfo, status: ExecStatus, started_at: number, finished_at?: number, exit_code?: number, signal?: string, error?: string, stdout_bytes: number, stderr_bytes: number, 
+/**
+ * Who approved the command, when the policy asked for approval.
+ */
+approver?: string, };

@@ -5,6 +5,8 @@ import { DaemonOffline } from '@/app/DaemonOffline'
 import { DiffDialog } from '@/app/DiffDialog'
 import { useHostlaneEvent } from '@/app/events'
 import { formatDuration, formatTime } from '@/app/format'
+import { methodLabels } from '@/app/methods'
+import { approverLabel, riskLabels } from '@/app/policy'
 import { OutputDialog } from '@/app/OutputDialog'
 import { Page, PageContent, Toolbar } from '@/layout'
 import {
@@ -24,6 +26,7 @@ import type { AuditEntry } from '@shared/protocol/AuditEntry'
 import type { AuditList } from '@shared/protocol/AuditList'
 import type { AuditListParams } from '@shared/protocol/AuditListParams'
 import type { HostsList } from '@shared/protocol/HostsList'
+import type { Risk } from '@shared/protocol/Risk'
 
 const PAGE_SIZE = 100
 const ANY = '*'
@@ -36,31 +39,6 @@ const ranges = {
   '7d': { label: '最近 7 天', ms: 7 * 86_400_000 }
 } as const
 type Range = keyof typeof ranges
-
-const methodLabels: Record<string, string> = {
-  'exec.run': '执行命令',
-  'hosts.connect': '连接',
-  'hosts.disconnect': '断开',
-  'hosts.trust': '信任主机密钥',
-  'files.read': '读取文件',
-  'files.list': '列出目录',
-  'files.search': '搜索文件',
-  'files.write': '写入文件',
-  'files.patch': '修改文件',
-  'files.upload': '上传文件',
-  'files.download': '下载文件',
-  'files.revert': '撤销文件修改',
-  'ports.list': '列出端口',
-  'ports.inspect': '探测端口',
-  'ports.check': '检查端口',
-  'ports.find_free': '查找空闲端口',
-  'ports.annotate': '端口备注',
-  'tunnels.open': '建立隧道',
-  'tunnels.close': '关闭隧道',
-  'tunnels.start': '启动隧道',
-  'tunnels.update': '修改隧道',
-  'tunnels.delete': '删除隧道'
-}
 
 const errorLabels: Partial<Record<string, string>> = {
   HOST_KEY_UNKNOWN: '密钥未信任',
@@ -78,7 +56,11 @@ const errorLabels: Partial<Record<string, string>> = {
   REMOTE_COMMAND_FAILED: '远程命令失败',
   PORT_IN_USE: '端口被占用',
   TUNNEL_NOT_FOUND: '隧道不存在',
-  FORWARDING_DENIED: '禁止转发'
+  FORWARDING_DENIED: '禁止转发',
+  POLICY_DENIED: '策略拒绝',
+  APPROVAL_REQUIRED: '等待审批',
+  APPROVAL_NOT_FOUND: '审批不存在',
+  RULE_NOT_FOUND: '规则不存在'
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -87,6 +69,15 @@ function record(value: unknown): Record<string, unknown> {
 
 function summary(entry: AuditEntry): string {
   const params = record(entry.params)
+  if (entry.method === 'approvals.resolve') {
+    const resolved = record(entry.result)
+    return `${params.approve ? '允许' : '拒绝'} ${String(resolved.summary ?? params.id ?? '')}`
+  }
+  if (entry.method === 'hosts.label') {
+    const tags = Array.isArray(params.tags) ? params.tags.map(String) : []
+    return [typeof params.env === 'string' ? params.env : '无环境', ...tags].join(' ')
+  }
+  if (entry.method === 'policy.stop' && typeof params.reason === 'string') return params.reason
   if (typeof params.command === 'string') return params.command
   if (typeof params.fingerprint === 'string') return params.fingerprint
   if (typeof params.pattern === 'string') return params.pattern
@@ -120,6 +111,7 @@ function outputId(entry: AuditEntry): string | null {
 
 function outcomeBadge(entry: AuditEntry) {
   if (entry.outcome === 'interrupted') return <Badge tone="warning">中断</Badge>
+  if (entry.error_kind === 'APPROVAL_REQUIRED') return <Badge tone="accent">等待审批</Badge>
   if (entry.outcome === 'error') {
     return (
       <Badge tone="danger">{(entry.error_kind && errorLabels[entry.error_kind]) ?? '失败'}</Badge>
@@ -127,6 +119,7 @@ function outcomeBadge(entry: AuditEntry) {
   }
   const result = record(entry.result)
   if (result.status === 'timed_out') return <Badge tone="warning">超时</Badge>
+  if (result.status === 'cancelled') return <Badge tone="warning">急停终止</Badge>
   if (typeof result.exit_code === 'number' && result.exit_code !== 0) {
     return <Badge tone="warning">退出 {result.exit_code}</Badge>
   }
@@ -143,6 +136,7 @@ export function AuditPage() {
   const [host, setHost] = useState(ANY)
   const [client, setClient] = useState(ANY)
   const [range, setRange] = useState<Range>(ANY)
+  const [minRisk, setMinRisk] = useState<string>(ANY)
   const [entries, setEntries] = useState<AuditEntry[]>([])
   const [hasMore, setHasMore] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -162,6 +156,7 @@ export function AuditPage() {
       if (host !== ANY) params.host = host
       if (client !== ANY) params.client = client
       if (range !== ANY) params.since = Date.now() - ranges[range].ms
+      if (minRisk !== ANY) params.min_risk = minRisk as Risk
       setLoading(true)
       const reply = await callHostlane<AuditList>('audit.list', params)
       if (id !== request.current) return
@@ -182,7 +177,7 @@ export function AuditPage() {
         return names.size === previous.length ? previous : [...names].sort()
       })
     },
-    [host, client, range]
+    [host, client, range, minRisk]
   )
 
   useEffect(() => {
@@ -210,7 +205,7 @@ export function AuditPage() {
     [entries, selectedId]
   )
 
-  const filtered = host !== ANY || client !== ANY || range !== ANY
+  const filtered = host !== ANY || client !== ANY || range !== ANY || minRisk !== ANY
 
   return (
     <Page>
@@ -239,6 +234,18 @@ export function AuditPage() {
           options={[
             { value: ANY, label: '全部来源' },
             ...clients.map((c) => ({ value: c, label: c }))
+          ]}
+        />
+        <Select
+          aria-label="风险"
+          value={minRisk}
+          onValueChange={setMinRisk}
+          disabled={!online}
+          options={[
+            { value: ANY, label: '全部风险' },
+            { value: 'L1', label: 'L1 及以上' },
+            { value: 'L2', label: 'L2 及以上' },
+            { value: 'L3', label: 'L3' }
           ]}
         />
         <Select
@@ -293,7 +300,14 @@ export function AuditPage() {
                   description={[formatTime(entry.started_at), clientLabel(entry), entry.host]
                     .filter(Boolean)
                     .join(' · ')}
-                  trailing={outcomeBadge(entry)}
+                  trailing={
+                    <>
+                      {entry.risk && entry.risk !== 'L0' && (
+                        <Badge tone={riskLabels[entry.risk].tone}>{entry.risk}</Badge>
+                      )}
+                      {outcomeBadge(entry)}
+                    </>
+                  }
                 />
               ))}
             </List>
@@ -377,7 +391,8 @@ function AuditDetail({ entry, onViewOutput, onViewDiff }: AuditDetailProps) {
         <Row label="耗时" value={formatDuration(entry.finished_at - entry.started_at)} />
         <Row label="来源" value={clientLabel(entry)} />
         <Row label="主机" value={entry.host ?? '—'} />
-        <Row label="审批人" value={entry.approver ?? '无需审批'} />
+        <Row label="风险" value={entry.risk ? riskLabels[entry.risk].label : '—'} />
+        <Row label="审批人" value={entry.approver ? approverLabel(entry.approver) : '无需审批'} />
         {entry.error_kind && <Row label="错误类型" value={entry.error_kind} />}
         {entry.error_message && <Row label="错误信息" value={entry.error_message} />}
       </Section>

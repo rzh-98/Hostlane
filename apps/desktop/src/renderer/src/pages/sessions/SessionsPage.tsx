@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, RefreshCw, SquareTerminal, TriangleAlert } from 'lucide-react'
+import { ArrowDown, RefreshCw, ShieldCheck, SquareTerminal, TriangleAlert } from 'lucide-react'
 import { daemonStore } from '@/app/daemon'
 import { DaemonOffline } from '@/app/DaemonOffline'
 import { useHostlaneEvent } from '@/app/events'
 import { formatAgo, formatDuration, formatTime } from '@/app/format'
 import { OutputDialog } from '@/app/OutputDialog'
+import { approverLabel } from '@/app/policy'
 import { createStore } from '@/lib/store'
 import { cn } from '@/lib/cn'
 import { Page, PageContent, Toolbar } from '@/layout'
@@ -259,6 +260,8 @@ function statusBadge(exec: ExecRecord) {
       return <Badge tone="danger">连接断开</Badge>
     case 'interrupted':
       return <Badge tone="warning">已中断</Badge>
+    case 'cancelled':
+      return <Badge tone="warning">急停终止</Badge>
   }
 }
 
@@ -282,6 +285,12 @@ function ExecBlock({ exec, output, showHost, showClient, onViewOutput }: ExecBlo
         {showClient && <span className="truncate">{sessionKey(exec)}</span>}
         {exec.cwd && <span className="truncate font-mono">{exec.cwd}</span>}
         <span className="flex-1" />
+        {exec.approver && (
+          <span className="flex shrink-0 items-center gap-1 text-success-text" title="审批放行">
+            <ShieldCheck className="size-3.5" />
+            {approverLabel(exec.approver)}
+          </span>
+        )}
         {exec.finished_at && (
           <span className="tabular-nums">{formatDuration(exec.finished_at - exec.started_at)}</span>
         )}

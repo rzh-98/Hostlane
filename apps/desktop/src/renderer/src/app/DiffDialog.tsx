@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { TriangleAlert, Undo2 } from 'lucide-react'
-import { cn } from '@/lib/cn'
 import {
   Button,
   ConfirmDialog,
@@ -18,6 +17,7 @@ import type { FileChange } from '@shared/protocol/FileChange'
 import type { FileChangeResult } from '@shared/protocol/FileChangeResult'
 import type { FileOperation } from '@shared/protocol/FileOperation'
 import { callHostlane } from './daemon'
+import { DiffLines } from './DiffView'
 import { formatBytes, formatTime } from './format'
 
 const operationLabels: Record<FileOperation, string> = {
@@ -42,14 +42,6 @@ export function DiffDialog({ changeId, onClose }: DiffDialogProps) {
       </DialogContent>
     </Dialog>
   )
-}
-
-function lineClass(line: string): string {
-  if (line.startsWith('+++') || line.startsWith('---')) return 'font-semibold text-fg'
-  if (line.startsWith('@@')) return 'text-accent-text'
-  if (line.startsWith('+')) return 'bg-success-subtle text-success-text'
-  if (line.startsWith('-')) return 'bg-danger-subtle text-danger-text'
-  return 'text-fg-muted'
 }
 
 function DiffBody({ changeId }: { changeId: string }) {
@@ -84,8 +76,6 @@ function DiffBody({ changeId }: { changeId: string }) {
   }
 
   const canRevert = change !== null && (change.created || change.has_backup)
-  const lines = change?.diff?.split('\n') ?? []
-  if (lines[lines.length - 1] === '') lines.pop()
 
   return (
     <>
@@ -121,14 +111,7 @@ function DiffBody({ changeId }: { changeId: string }) {
               <span className="px-3 text-fg-muted">读取中…</span>
             )
           ) : change.diff ? (
-            lines.map((line, index) => (
-              <div
-                key={index}
-                className={cn('px-3 whitespace-pre-wrap break-all', lineClass(line))}
-              >
-                {line || ' '}
-              </div>
-            ))
+            <DiffLines diff={change.diff} />
           ) : (
             <span className="px-3 text-fg-muted">
               没有保存 diff（二进制或过大的文件，{formatBytes(change.size)}）

@@ -7,7 +7,8 @@ export const IpcChannel = {
   setTitleBarHeight: 'window:set-title-bar-height',
   hostlaneCall: 'hostlane:call',
   hostlaneStartDaemon: 'hostlane:start-daemon',
-  hostlaneEvent: 'hostlane:event'
+  hostlaneEvent: 'hostlane:event',
+  navigate: 'app:navigate'
 } as const
 
 export type ThemeSource = 'system' | 'light' | 'dark'
@@ -35,7 +36,18 @@ export const RENDERER_METHODS = [
   'tunnels.start',
   'tunnels.update',
   'tunnels.delete',
-  'audit.list'
+  'audit.list',
+  'hosts.label',
+  'approvals.list',
+  'approvals.get',
+  'approvals.resolve',
+  'policy.status',
+  'policy.stop',
+  'policy.resume',
+  'policy.check',
+  'policy.rules.list',
+  'policy.rules.add',
+  'policy.rules.delete'
 ] as const
 export type RendererMethod = (typeof RENDERER_METHODS)[number]
 
@@ -81,4 +93,6 @@ export interface DesktopApi {
     /** Listens to daemon events; returns the unsubscribe function. */
     onEvent: (listener: (event: HostlaneEvent) => void) => () => void
   }
+  /** Page requests from the main process, e.g. after clicking an approval notification. */
+  onNavigate: (listener: (page: string) => void) => () => void
 }

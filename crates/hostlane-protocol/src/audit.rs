@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use crate::{ClientInfo, ErrorKind};
+use crate::{ClientInfo, ErrorKind, Risk};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -42,10 +42,15 @@ pub struct AuditEntry {
     /// Summary of the result, e.g. exit code and output id for `exec.run`.
     #[ts(type = "unknown")]
     pub result: Value,
-    /// Who approved the call (M5).
+    /// Who let the call through when the policy asked for approval: `desktop`, `cli`,
+    /// `rule <id>` or `session grant`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub approver: Option<String>,
+    /// Risk assessed by the policy, for calls that touch a server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub risk: Option<Risk>,
 }
 
 /// Params of `audit.list`.
@@ -70,6 +75,10 @@ pub struct AuditListParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "number")]
     pub until: Option<u64>,
+    /// Only calls assessed at this risk or higher.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub min_risk: Option<Risk>,
     /// Only entries with a smaller id, for paging.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "number")]

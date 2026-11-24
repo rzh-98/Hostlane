@@ -7,6 +7,7 @@ import { AppSidebar } from './AppSidebar'
 import { APP_NAME } from './config'
 import { useConnectionsSync } from './connections'
 import { defaultPage, pages } from './pages'
+import { usePolicySync } from './policy'
 import { navigate, useRoute } from './router'
 
 export function App() {
@@ -14,6 +15,8 @@ export function App() {
   const current = pages.find((page) => page.id === route) ?? defaultPage
   usePageShortcuts()
   useConnectionsSync()
+  usePolicySync()
+  useEffect(() => window.desktop?.onNavigate(navigate), [])
 
   return (
     <TooltipProvider>

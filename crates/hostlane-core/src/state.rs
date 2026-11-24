@@ -6,6 +6,7 @@ use hostlane_protocol::{DaemonStatus, ErrorKind, PROTOCOL_VERSION, RpcError};
 use tokio::sync::Notify;
 
 use crate::events::EventBus;
+use crate::policy::Policy;
 use crate::pool::Pool;
 use crate::ssh::Locations;
 use crate::ssh_config::{self, Entry, Loaded};
@@ -55,6 +56,7 @@ pub struct Daemon {
     pub(crate) events: EventBus,
     pub(crate) pool: Arc<Pool>,
     pub(crate) tunnels: Arc<Tunnels>,
+    pub(crate) policy: Arc<Policy>,
     pub(crate) shutdown: Notify,
 }
 
@@ -96,6 +98,7 @@ impl Daemon {
             store.clone(),
             options.ssh_config_path.clone(),
         ));
+        let policy = Arc::new(Policy::new(store.clone(), events.clone()));
         Ok(Self {
             started: Instant::now(),
             started_at: now_ms(),
@@ -107,6 +110,7 @@ impl Daemon {
             store,
             pool,
             tunnels,
+            policy,
             events,
             shutdown: Notify::new(),
         })
@@ -129,7 +133,9 @@ impl Daemon {
             crate::exec::prune_outputs(&backups, OUTPUT_RETENTION);
         });
         tokio::spawn(self.pool.clone().maintain());
-        self.tunnels.restore().await;
+        self.policy.load().await;
+        tokio::spawn(self.policy.clone().maintain());
+        self.tunnels.restore(self.policy.is_stopped()).await;
         tokio::spawn(self.tunnels.clone().maintain());
     }
 
@@ -145,8 +151,21 @@ impl Daemon {
         }
     }
 
+    /// Hosts with the labels set in Hostlane applied over those from ssh_config.
     pub(crate) async fn load_hosts(&self) -> Result<Loaded, RpcError> {
-        load_hosts(&self.ssh_config_path).await
+        let mut loaded = load_hosts(&self.ssh_config_path).await?;
+        match self.store.host_labels().await {
+            Ok(labels) => {
+                for entry in &mut loaded.entries {
+                    if let Some((env, tags)) = labels.get(&entry.host.id) {
+                        entry.host.env = *env;
+                        entry.host.tags = tags.clone();
+                    }
+                }
+            }
+            Err(err) => tracing::warn!(%err, "cannot load host labels"),
+        }
+        Ok(loaded)
     }
 
     /// Finds a host by id, returning it with the config it came from.

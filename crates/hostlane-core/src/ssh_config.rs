@@ -4,10 +4,12 @@
 //! obtained for an option wins, `Host` patterns (`*`, `?`, `!`) select which
 //! blocks apply to an alias, and `Include` is expanded in place. Only concrete
 //! aliases (no wildcards) become hosts. `Match` blocks are skipped.
+//!
+//! A comment `# hostlane: env=prod tags=web,eu` inside a `Host` block labels its hosts.
 
 use std::path::{Path, PathBuf};
 
-use hostlane_protocol::{Host, HostSource};
+use hostlane_protocol::{Host, HostEnv, HostSource};
 
 const MAX_INCLUDE_DEPTH: usize = 16;
 const DEFAULT_PORT: u16 = 22;
@@ -93,6 +95,16 @@ fn parse_into(
     warnings: &mut Vec<String>,
 ) {
     for raw in text.lines() {
+        if let Some(labels) = raw.trim().strip_prefix('#').map(str::trim)
+            && let Some(labels) = labels.strip_prefix("hostlane:")
+        {
+            if let Some(block) = blocks.last_mut() {
+                block
+                    .options
+                    .push(("hostlane".into(), labels.trim().to_string()));
+            }
+            continue;
+        }
         let Some((key, value)) = split_line(raw) else {
             continue;
         };
@@ -272,6 +284,8 @@ fn resolve_alias(blocks: &[Block], alias: &str) -> Entry {
     let mut known_hosts_files = None;
     let mut host_key_alias = None;
     let mut connect_timeout = None;
+    let mut env = None;
+    let mut tags: Vec<String> = Vec::new();
 
     for block in blocks.iter().filter(|b| block_applies(b, alias)) {
         for (key, value) in &block.options {
@@ -317,6 +331,23 @@ fn resolve_alias(blocks: &[Block], alias: &str) -> Entry {
                 "connecttimeout" if connect_timeout.is_none() => {
                     connect_timeout = value.parse::<u64>().ok();
                 }
+                "hostlane" => {
+                    for label in value.split_whitespace() {
+                        match label.split_once('=') {
+                            Some(("env", value)) if env.is_none() => {
+                                env = serde_json::from_value::<HostEnv>(value.into()).ok();
+                            }
+                            Some(("tags", value)) => {
+                                for tag in value.split(',').map(str::trim) {
+                                    if !tag.is_empty() && !tags.iter().any(|t| t == tag) {
+                                        tags.push(tag.to_string());
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -331,8 +362,8 @@ fn resolve_alias(blocks: &[Block], alias: &str) -> Entry {
         proxy_jump: proxy_jump.filter(|p| !p.eq_ignore_ascii_case("none")),
         identity_files,
         source: HostSource::SshConfig,
-        env: None,
-        tags: Vec::new(),
+        env,
+        tags,
     };
     let options = SshOptions {
         identity_agent,
@@ -425,6 +456,16 @@ mod tests {
         );
         assert_eq!(options.host_key_alias.as_deref(), Some("alias-a"));
         assert_eq!(options.connect_timeout_secs, Some(5));
+    }
+
+    #[test]
+    fn reads_hostlane_labels() {
+        let text = "Host web-*\n  # hostlane: tags=web\nHost web-1\n  # hostlane: env=prod tags=eu,web\n  HostName 10.0.0.1\nHost dev\n  #hostlane: env=dev\n# hostlane: env=staging\n";
+        let hosts = hosts(text);
+        assert_eq!(hosts[0].env, Some(HostEnv::Prod));
+        assert_eq!(hosts[0].tags, vec!["web", "eu"]);
+        assert_eq!(hosts[1].env, Some(HostEnv::Dev));
+        assert!(hosts[1].tags.is_empty());
     }
 
     #[test]

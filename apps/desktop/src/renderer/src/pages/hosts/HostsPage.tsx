@@ -32,6 +32,7 @@ import type { HostKeyInfo } from '@shared/protocol/HostKeyInfo'
 import type { HostsList } from '@shared/protocol/HostsList'
 import type { RpcError } from '@shared/protocol/RpcError'
 import type { TrustResult } from '@shared/protocol/TrustResult'
+import { LabelDialog } from './LabelDialog'
 
 const envBadge: Record<HostEnv, { label: string; tone: 'success' | 'warning' | 'danger' }> = {
   dev: { label: 'dev', tone: 'success' },
@@ -78,6 +79,7 @@ export function HostsPage() {
   const [pendingTrust, setPendingTrust] = useState<HostKeyInfo | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const [labeling, setLabeling] = useState<Host | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -137,6 +139,23 @@ export function HostsPage() {
           }
         : { tone: 'danger', text: reply.error.message, hint: reply.error.hint }
     )
+  }
+
+  const label = async (host: Host, env: HostEnv | undefined, tags: string[]) => {
+    setBusyHost(host.id)
+    const reply = await callHostlane<Host>('hosts.label', { host: host.id, env, tags })
+    setBusyHost(null)
+    if (!reply.ok) {
+      setFeedback({ tone: 'danger', text: reply.error.message, hint: reply.error.hint })
+      return
+    }
+    setLabeling(null)
+    setData((current) =>
+      current
+        ? { ...current, hosts: current.hosts.map((h) => (h.id === host.id ? reply.result : h)) }
+        : current
+    )
+    setFeedback({ tone: 'success', text: `已更新 ${host.alias} 的标签` })
   }
 
   const visible = useMemo(() => {
@@ -272,6 +291,7 @@ export function HostsPage() {
                 busy={busyHost === selected.id}
                 onConnect={() => void connect(selected.id)}
                 onDisconnect={() => void disconnect(selected.id)}
+                onEditLabels={() => setLabeling(selected)}
               />
             ) : (
               <EmptyState icon={<Server />} title="未选择主机" />
@@ -280,6 +300,12 @@ export function HostsPage() {
         </PageContent>
       )}
 
+      <LabelDialog
+        host={labeling}
+        busy={labeling !== null && busyHost === labeling.id}
+        onOpenChange={(open) => !open && setLabeling(null)}
+        onSubmit={(env, tags) => labeling && void label(labeling, env, tags)}
+      />
       <ConfirmDialog
         open={pendingTrust !== null}
         onOpenChange={(open) => !open && setPendingTrust(null)}
@@ -315,9 +341,17 @@ interface HostDetailProps {
   busy: boolean
   onConnect: () => void
   onDisconnect: () => void
+  onEditLabels: () => void
 }
 
-function HostDetail({ host, connection, busy, onConnect, onDisconnect }: HostDetailProps) {
+function HostDetail({
+  host,
+  connection,
+  busy,
+  onConnect,
+  onDisconnect,
+  onEditLabels
+}: HostDetailProps) {
   const status = describeConnection(connection)
   const connected = connection?.state === 'connected'
   const hostKey = connection?.host_key
@@ -384,6 +418,19 @@ function HostDetail({ host, connection, busy, onConnect, onDisconnect }: HostDet
             value={`${hostKey.fingerprint}\n${hostKey.key_type} · ${hostKey.known_hosts_name}`}
           />
         )}
+      </Section>
+
+      <Section
+        title="标签"
+        divided
+        actions={
+          <Button size="sm" disabled={busy} onClick={onEditLabels}>
+            编辑
+          </Button>
+        }
+      >
+        <Row label="环境" value={host.env ?? '未标记'} />
+        <Row label="标签" value={host.tags.length > 0 ? host.tags.join(', ') : '无'} />
       </Section>
 
       <Section title="配置" divided>

@@ -43,6 +43,8 @@ pub enum ErrorKind {
     TunnelNotFound,
     /// The SSH server refuses TCP forwarding (`AllowTcpForwarding no`).
     ForwardingDenied,
+    ApprovalNotFound,
+    RuleNotFound,
 }
 
 impl ErrorKind {
@@ -73,6 +75,8 @@ impl ErrorKind {
             Self::PortInUse => -32016,
             Self::TunnelNotFound => -32017,
             Self::ForwardingDenied => -32018,
+            Self::ApprovalNotFound => -32019,
+            Self::RuleNotFound => -32020,
         }
     }
 }

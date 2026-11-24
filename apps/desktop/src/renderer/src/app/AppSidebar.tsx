@@ -1,4 +1,5 @@
-import { Monitor, Moon, Sun, SunMoon } from 'lucide-react'
+import { useState } from 'react'
+import { Monitor, Moon, OctagonPause, Sun, SunMoon } from 'lucide-react'
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarItem } from '@/layout'
 import { modKey } from '@/lib/platform'
 import {
@@ -8,6 +9,8 @@ import {
   type ThemePreference
 } from '@/theme/appearance'
 import {
+  Badge,
+  ConfirmDialog,
   Menu,
   MenuContent,
   MenuLabel,
@@ -20,6 +23,7 @@ import {
 import { APP_NAME } from './config'
 import { daemonStore, useDaemonPolling } from './daemon'
 import type { PageDefinition } from './pages'
+import { emergencyStop, policyStore, resumeAgents } from './policy'
 
 interface AppSidebarProps {
   pages: PageDefinition[]
@@ -30,6 +34,7 @@ interface AppSidebarProps {
 export function AppSidebar({ pages, currentId, onNavigate }: AppSidebarProps) {
   const mainPages = pages.filter((page) => page.placement !== 'bottom')
   const bottomPages = pages.filter((page) => page.placement === 'bottom')
+  const pending = policyStore.use().status?.pending_approvals ?? 0
 
   const item = (page: PageDefinition, index?: number) => {
     const Icon = page.icon
@@ -39,6 +44,13 @@ export function AppSidebar({ pages, currentId, onNavigate }: AppSidebarProps) {
         icon={Icon ? <Icon /> : undefined}
         active={page.id === currentId}
         onClick={() => onNavigate(page.id)}
+        trailing={
+          page.id === 'approvals' && pending > 0 ? (
+            <Badge tone="warning" aria-label={`${pending} 个待审批`}>
+              {pending}
+            </Badge>
+          ) : undefined
+        }
         title={
           index !== undefined && index < 9 ? `${page.title}（${modKey}${index + 1}）` : undefined
         }
@@ -59,6 +71,7 @@ export function AppSidebar({ pages, currentId, onNavigate }: AppSidebarProps) {
         </div>
       </SidebarContent>
       <SidebarFooter>
+        <EmergencyStop onNavigate={onNavigate} />
         <DaemonIndicator onNavigate={onNavigate} />
         {bottomPages.map((page) => item(page))}
         <AppearanceMenu />
@@ -91,6 +104,53 @@ function DaemonIndicator({ onNavigate }: { onNavigate: (id: string) => void }) {
     >
       {label}
     </SidebarItem>
+  )
+}
+
+/**
+ * S5: pauses every agent call. Shown while the daemon is online; the entry stays
+ * neutral and the confirmation carries the red button.
+ */
+function EmergencyStop({ onNavigate }: { onNavigate: (id: string) => void }) {
+  const { phase } = daemonStore.use()
+  const { status } = policyStore.use()
+  const [confirming, setConfirming] = useState(false)
+  if (phase !== 'online' || !status) return null
+  const stopped = status.stopped
+
+  return (
+    <>
+      <SidebarItem
+        icon={
+          stopped ? (
+            <span className="flex size-4 items-center justify-center">
+              <StatusDot tone="danger" />
+            </span>
+          ) : (
+            <OctagonPause />
+          )
+        }
+        title={stopped ? '点击恢复 agent 操作' : '暂停所有 agent 操作'}
+        onClick={() => setConfirming(true)}
+      >
+        {stopped ? '已急停' : '急停'}
+      </SidebarItem>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={stopped ? '恢复 agent 操作？' : '暂停所有 agent 操作？'}
+        description={
+          stopped
+            ? 'agent 的调用会重新按策略处理。急停期间关闭的隧道不会自动恢复。'
+            : 'agent 的调用会被拒绝，正在运行的命令会被终止，agent 创建的隧道会关闭，等待中的审批会被拒绝。桌面端的操作不受影响。'
+        }
+        confirmLabel={stopped ? '恢复' : '急停'}
+        danger={!stopped}
+        onConfirm={() => {
+          void (stopped ? resumeAgents() : emergencyStop()).then(() => onNavigate('approvals'))
+        }}
+      />
+    </>
   )
 }
 

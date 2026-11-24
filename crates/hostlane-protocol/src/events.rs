@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{AuditEntry, Connection, ExecRecord, FileChange, OutputStream, Tunnel};
+use crate::{
+    Approval, AuditEntry, Connection, ExecRecord, FileChange, OutputStream, PolicyStatus, Tunnel,
+};
 
 /// Pushed to `events.subscribe` connections as `{"method":"event","params":<Event>}`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -41,6 +43,18 @@ pub enum Event {
     /// A tunnel was closed (temporary) or deleted (saved).
     TunnelRemoved {
         id: String,
+    },
+    /// A call needs a person's approval.
+    ApprovalRequested {
+        approval: Approval,
+    },
+    /// An approval was decided, expired, or its call ran or stopped waiting.
+    ApprovalUpdated {
+        approval: Approval,
+    },
+    /// The emergency stop was switched, or the number of pending approvals changed.
+    Policy {
+        status: PolicyStatus,
     },
     /// This subscriber fell behind and missed events; reload state with the list methods.
     Lagged {

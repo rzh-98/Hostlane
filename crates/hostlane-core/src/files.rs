@@ -975,6 +975,38 @@ fn new_mode(mode: Option<&str>) -> Result<u32, RpcError> {
         .map(|mode| mode.unwrap_or(DEFAULT_NEW_MODE))
 }
 
+/// The diff a `files.write` or `files.patch` call would produce, shown when it waits
+/// for approval. `None` when it cannot be computed (binary, too large, unreachable).
+pub async fn preview(daemon: &Daemon, params: &serde_json::Value) -> Option<String> {
+    let host = params.get("host")?.as_str()?;
+    let path = sftp_path(params.get("path")?.as_str()?).ok()?;
+    let remote = Remote::open(daemon, host).await.ok()?;
+    let target = remote.target(&path).await.ok()?;
+    let old = match &target.existing {
+        Some(attrs) => {
+            remote
+                .snapshot(&target.path, attrs.clone(), None)
+                .await
+                .ok()?
+                .bytes?
+        }
+        None => Vec::new(),
+    };
+    let new = if let Some(content) = params.get("content").and_then(|c| c.as_str()) {
+        content.as_bytes().to_vec()
+    } else {
+        let params: FilePatchParams = serde_json::from_value(params.clone()).ok()?;
+        let text = std::str::from_utf8(&old).ok()?;
+        let patched = match (&params.edits, &params.diff) {
+            (Some(edits), None) => patch::apply_edits(text, edits).ok()?,
+            (None, Some(diff)) => patch::apply_unified(text, diff).ok()?,
+            _ => return None,
+        };
+        patched.into_bytes()
+    };
+    patch::summarize(&target.path, &old, &new).diff
+}
+
 pub async fn write(
     daemon: &Daemon,
     client: &ClientInfo,

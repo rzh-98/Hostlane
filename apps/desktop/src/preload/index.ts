@@ -20,6 +20,13 @@ const api: DesktopApi = {
         ipcRenderer.removeListener(IpcChannel.hostlaneEvent, handler)
       }
     }
+  },
+  onNavigate: (listener) => {
+    const handler = (_event: IpcRendererEvent, page: string) => listener(page)
+    ipcRenderer.on(IpcChannel.navigate, handler)
+    return () => {
+      ipcRenderer.removeListener(IpcChannel.navigate, handler)
+    }
   }
 }
 

@@ -12,6 +12,7 @@ mod exec;
 mod files;
 mod handlers;
 mod patch;
+mod policy;
 mod pool;
 mod ports;
 mod remote;

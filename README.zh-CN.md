@@ -4,7 +4,7 @@
   <p>给你自己的 agent 用的 SSH 运行时。让 Codex、Claude Code 或自研 agent 在本机操作远程服务器：执行命令、修改文件、端口映射和管理 web 服务端口，并带有指纹校验、审批和审计。</p>
   <p>不内置 LLM；服务器端不需要安装任何组件，只要有 <code>sshd</code>。</p>
   <p>
-    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M4)-orange" />
+    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M5)-orange" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -21,7 +21,7 @@
 </div>
 
 > [!WARNING]
-> Hostlane 仍处于早期开发阶段。目前可用的是 M0–M4：守护进程、CLI、导入 `~/.ssh/config`、SSH 连接池与主机指纹校验、`exec`、会话监视器、审计日志、文件操作（读取、列目录、搜索、带哈希校验的原子修改、上传、下载、撤销），端口管理（端口发现，关联进程、systemd 和 Docker，HTTP/HTTPS 探测和证书有效期，备注，空闲端口查找）和隧道（本地转发和端口冲突检测、保存的隧道随守护进程恢复、断线自动重连、agent 临时隧道到期关闭）。审批和 MCP 会在 M5–M6 陆续实现，见[路线图](#路线图)。
+> Hostlane 仍处于早期开发阶段。目前可用的是 M0–M5：守护进程、CLI、导入 `~/.ssh/config`、SSH 连接池与主机指纹校验、`exec`、会话监视器、审计日志、文件操作（读取、列目录、搜索、带哈希校验的原子修改、上传、下载、撤销），端口管理（端口发现，关联进程、systemd 和 Docker，HTTP/HTTPS 探测和证书有效期，备注，空闲端口查找）和隧道（本地转发和端口冲突检测、保存的隧道随守护进程恢复、断线自动重连、agent 临时隧道到期关闭）和策略（命令风险分级、规则、带 diff 的阻塞式或异步审批、急停）。MCP 和打包分发会在 M6 实现，见[路线图](#路线图)。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -128,7 +128,12 @@ npm run dev
 | `hostlane connections`                                                             | 查看连接状态、延迟、活动通道和主机指纹                                   |
 | `hostlane watch [--host H]`                                                        | 实时查看所有 agent 执行的命令和输出（只读）                              |
 | `hostlane history`                                                                 | 最近执行的命令                                                           |
-| `hostlane audit [--host H] [--client C]`                                           | 查看审计日志                                                             |
+| `hostlane audit [--host H] [--client C] [--min-risk L2]`                           | 查看审计日志，含每次调用的风险等级和审批人                               |
+| `hostlane approvals [--all]` / `approval <id>`                                     | 列出待审批的调用，或查看某一项的命令或 diff、风险和原因                  |
+| `hostlane approve <id> [--scope once\|session\|always]` / `deny <id> [--note T]`   | 审批（只能由人执行；`always` 会添加一条允许规则）                        |
+| `hostlane stop [--reason T]` / `resume`                                            | 急停：拒绝 agent 调用、终止其命令并关闭其隧道；`resume` 恢复             |
+| `hostlane label <host> [--env prod] [--tag T]… [--clear]`                          | 设置主机的环境和标签，规则和默认策略会用到                               |
+| `hostlane policy status` / `add` / `delete` / `check <host> <cmd>`                 | 查看或修改规则，或预先查看命令的风险和策略决定                           |
 | `hostlane call <method> '<params>'`                                                | 直接向守护进程发送 JSON-RPC 调用                                         |
 | `hostlane daemon start` / `stop`                                                   | 在后台启动守护进程，或让它退出                                           |
 | `hostlane daemon run`                                                              | 在前台运行守护进程                                                       |
@@ -144,6 +149,7 @@ npm run dev
 | `HOSTLANE_BIN`        | 桌面端使用的 `hostlane` 程序路径                       |
 | `HOSTLANE_CLIENT`     | CLI 调用的来源名称（默认 `cli`），显示在审计和会话页中 |
 | `HOSTLANE_SESSION`    | agent 会话 ID，会话页按它分组                          |
+| `HOSTLANE_NOTIFY`     | 设为 `0` 时，守护进程不再自己发送审批的系统通知        |
 
 不想影响真实环境时，可以把这些变量都指向临时目录：
 
@@ -171,6 +177,8 @@ M6 提供 MCP Server 之前，agent 通过 CLI 使用 Hostlane。把下面这段
 - 需要在本机访问服务器上的服务时，用 `hostlane --json tunnel open <host> <port>` 建立隧道，使用返回的 `tunnel.url`；用完后 `hostlane tunnel close <id>`，会话结束时运行 `hostlane tunnel close --session <会话 ID>`。不要绑定 0.0.0.0，除非用户明确要求。
 - 命令都加 `--json`；失败时读取 error.kind 和 error.hint 决定下一步。
 - 遇到 HOST_KEY_UNKNOWN 或 HOST_KEY_CHANGED 时停下来告诉用户，不要自行信任主机密钥。
+- 高风险操作（sudo、重启服务、删除目录等）需要用户在 Hostlane 中审批，命令会阻塞等待（默认 120 秒）。不想阻塞时加 `--async`：返回 APPROVAL_REQUIRED 和 error.details.ticket_id，告诉用户后用 `--ticket <ticket_id>` 重试完全相同的命令。可以先用 `hostlane --json policy check <host> <command>` 查看风险。
+- 遇到 POLICY_DENIED 时不要换个写法绕过；按 error.hint 告诉用户。不要运行 `hostlane approve`、`deny`、`resume` 或 `policy add`，这些只能由用户执行。
 - 设置 `HOSTLANE_CLIENT=<agent 名称>` 和 `HOSTLANE_SESSION=<会话 ID>`，审计和会话页会按它们区分来源。
 ```
 
@@ -185,8 +193,8 @@ M6 提供 MCP Server 之前，agent 通过 CLI 使用 Hostlane。把下面这段
 | **M2** 文件       | `read_file`、`list_dir`、`search`、`apply_patch`、`write_file`                            | ✅ 已完成 |
 | **M3** 端口       | 端口发现、进程关联、HTTP 探测、端口备注、空闲端口查找                                     | ✅ 已完成 |
 | **M4** 隧道       | 本地转发、配置持久化、自动重连、冲突检测、agent 临时隧道                                  | ✅ 已完成 |
-| **M5** 策略       | 风险分级、规则配置、阻塞式审批、急停                                                      | 下一步    |
-| **M6** MCP 与分发 | `hostlane mcp`、接入页、用户级服务注册、打包内置二进制                                    | 计划中    |
+| **M5** 策略       | 风险分级、规则配置、阻塞式审批、急停                                                      | ✅ 已完成 |
+| **M6** MCP 与分发 | `hostlane mcp`、接入页、用户级服务注册、打包内置二进制                                    | 下一步    |
 
 完整需求（含编号和优先级）见 [docs/requirements.md](docs/requirements.md)。
 
@@ -196,7 +204,7 @@ M6 提供 MCP Server 之前，agent 通过 CLI 使用 Hostlane。把下面这段
 ├─ Cargo.toml                  Rust workspace
 ├─ crates/
 │  ├─ hostlane-protocol/       线上传输的类型：JSON-RPC 帧、错误码、各方法的参数和结果
-│  ├─ hostlane-core/           守护进程：socket 服务、SSH 连接池、exec、文件（SFTP）、端口、隧道、审计（SQLite）、客户端
+│  ├─ hostlane-core/           守护进程：socket 服务、SSH 连接池、exec、文件（SFTP）、端口、隧道、策略与审批、审计（SQLite）、客户端
 │  └─ hostlane-cli/            `hostlane` 二进制：CLI + `daemon` 子命令
 ├─ apps/desktop/               Electron 桌面端（基于 Desktop-Starter）
 │  └─ src/
@@ -231,6 +239,8 @@ npx prettier --write src
 - SSH 私钥、密码和审计数据只保存在本机。凭据不进入渲染进程，也不写入日志。
 - 首次连接时必须由人核对并信任主机指纹；指纹变化时拒绝连接，agent 和 `hosts.trust` 都无法绕过。Hostlane 只写自己的 `known_hosts`，不修改 `~/.ssh/known_hosts`。
 - 审计日志只追加：数据库触发器禁止修改和删除记录。
+- 每个访问服务器的调用在执行前都会分级并按规则检查。桌面端自己的操作总是允许；CLI 按 agent 对待，但在终端中运行时会直接询问你。
+- 调用方名称（`HOSTLANE_CLIENT`）由客户端自己声明，没有认证。策略用来防止守规矩的 agent 犯错，不能隔离以你的用户身份运行的代码。
 - 认证使用 ssh-agent 或未加密的私钥文件；带口令的私钥请先 `ssh-add`，密码登录暂不支持。
 - 渲染进程运行在沙箱中，只能调用白名单内的守护进程方法。
 - Hostlane 不收集任何遥测数据，除了你的服务器之外不连接任何地方。

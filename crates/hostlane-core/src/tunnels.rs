@@ -24,6 +24,7 @@ use tokio::sync::{Notify, watch};
 use tokio::task::{JoinHandle, JoinSet};
 
 use crate::events::EventBus;
+use crate::policy::is_desktop;
 use crate::pool::{Conn, Pool};
 use crate::ssh::Trust;
 use crate::state::resolve_host;
@@ -507,7 +508,8 @@ impl Tunnels {
 
     /// Loads saved tunnels and starts the ones marked `auto_start`. Connection problems
     /// are retried in the background; a taken local port marks the tunnel failed.
-    pub async fn restore(&self) {
+    /// With `skip_agents` (emergency stop on), tunnels saved by agents stay stopped.
+    pub async fn restore(&self, skip_agents: bool) {
         let configs = match self.ctx.store.tunnels().await {
             Ok(configs) => configs,
             Err(err) => {
@@ -519,7 +521,7 @@ impl Tunnels {
         for config in configs {
             let rt = Runtime::new(config.clone(), true, None);
             lock(&self.map).insert(config.id.clone(), rt.clone());
-            if !config.auto_start {
+            if !config.auto_start || skip_agents && !is_desktop(&config.created_by) {
                 continue;
             }
             match self.bind_config(&config).await {
@@ -574,6 +576,8 @@ impl Tunnels {
             outcome: AuditOutcome::Ok,
             error: None,
             result: json!({ "closed": [config.id] }),
+            approver: None,
+            risk: None,
         };
         let entry = call.entry(0);
         match self.ctx.store.append_call(call).await {
@@ -582,6 +586,27 @@ impl Tunnels {
             }),
             Err(err) => tracing::error!(%err, "cannot write the audit log"),
         }
+    }
+
+    /// The host a tunnel forwards from.
+    pub fn host_of(&self, id: &str) -> Option<String> {
+        lock(&self.map).get(id).map(|rt| rt.config().host)
+    }
+
+    /// Emergency stop: closes every running tunnel that was not opened from the desktop
+    /// app. Saved ones stay in the list as stopped.
+    pub async fn close_agent_tunnels(&self) -> Vec<String> {
+        let _ops = self.ops.lock().await;
+        let mut closed = Vec::new();
+        for rt in self.all() {
+            if is_desktop(&rt.config().created_by) || rt.saved() && !rt.running() {
+                continue;
+            }
+            closed.push(rt.id());
+            self.close_one(&rt).await;
+        }
+        closed.sort();
+        closed
     }
 
     pub async fn stop_all(&self) {
