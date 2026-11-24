@@ -1,54 +1,239 @@
-# Hostlane
+<div align="center">
+  <h1>Hostlane</h1>
+  <p><b>English</b> · <a href="README.zh-CN.md">简体中文</a></p>
+  <p>An SSH runtime for the agent you already use. Let Codex, Claude Code or your own agent run commands, edit files, open tunnels and manage web-service ports on remote servers — from your machine, with fingerprint checks, approvals and an audit trail.</p>
+  <p>No built-in LLM. Nothing to install on the server: <code>sshd</code> is enough.</p>
+  <p>
+    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M0)-orange" />
+    <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
+    <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
+    <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
+    <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
+    <img alt="License" src="https://img.shields.io/badge/license-MIT-lightgrey" />
+  </p>
+  <p>
+    <a href="#quick-start">Quick start</a> ·
+    <a href="#use-it-from-your-agent">Use it from your agent</a> ·
+    <a href="#roadmap">Roadmap</a> ·
+    <a href="docs/architecture.md">Architecture</a> ·
+    <a href="#faq">FAQ</a>
+  </p>
+</div>
 
-让你自己的 agent 在本机安全地操作远程服务器：连接、执行、读写文件、端口映射和服务器端口管理。Hostlane 不内置 LLM，服务器端也不需要安装任何组件，只需要 `sshd`。
+> [!WARNING]
+> Hostlane is in early development. The M0 skeleton (daemon, local JSON-RPC, CLI, `~/.ssh/config` import and the desktop shell) works today; SSH connections, `exec`, files, tunnels and approvals arrive in M1–M6. See the [roadmap](#roadmap).
 
-- 需求：[docs/requirements.md](docs/requirements.md)
-- 架构与协议：[docs/architecture.md](docs/architecture.md)
-- 桌面端设计系统：[apps/desktop/docs/design-system.zh-CN.md](apps/desktop/docs/design-system.zh-CN.md)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
+  <img alt="Hosts page" src="docs/screenshots/hosts-light.png" />
+</picture>
 
-## 当前进度
+<table>
+  <tr>
+    <td><img alt="Integrations page (light)" src="docs/screenshots/integrations-light.png" /></td>
+    <td><img alt="Integrations page (dark)" src="docs/screenshots/integrations-dark.png" /></td>
+  </tr>
+</table>
 
-M0 骨架已完成：
+<sub>Screenshots use a sample <code>ssh_config</code> with made-up hosts. The desktop UI copy is currently in Chinese.</sub>
 
-- `hostlane` 单一二进制：常驻守护进程（`hostlane daemon …`）+ CLI。
-- 本地 socket JSON-RPC（权限 0600），已实现 `daemon.status`、`daemon.shutdown`、`hosts.list`。
-- 按 OpenSSH 规则读取 `~/.ssh/config`，支持 `Include`、通配符块和首次赋值生效。
-- 桌面端会自动拉起守护进程；主机页显示真实数据，其他页面列出各自的计划需求。
+## Why
 
-后续里程碑见 [需求文档第 7 节](docs/requirements.md#7-迭代计划)。
+Agents are good at operating servers, but the tools around them fall short. Terminal apps like Chaterm and Warp bring their own LLM. VS Code Remote-SSH and Claude Code's SSH mode install a runtime on the server. Existing SSH MCP servers leave out safe file edits, long-running jobs, approvals or multi-host work. Hostlane gives **your** agent the hands and keeps the brain with you:
 
-## 开发
+- **Bring your own agent.** Hostlane has no model and calls no model API. Any agent that can run a shell command or speak MCP can use it.
+- **Nothing on the server.** Only `sshd`, a POSIX shell and SFTP. Enhanced tools (`rg`, `tmux`, `docker`) are used when present, with automatic fallbacks.
+- **Safe by design.** Host fingerprints are checked and pinned, commands are classified by risk, risky operations wait for your approval, and every call lands in a local append-only audit log. A global stop switch pauses all agent activity.
+- **Edits you can trust.** File patches check a hash first, back up the original, upload to a temp file and swap atomically, keeping permissions and ownership.
+- **Built for web services.** See which ports listen on each server, which process, systemd unit or Docker container owns them, whether they answer HTTP, and forward them to your machine in one click.
+- **One daemon, many clients.** A small resident Rust daemon owns the SSH connections, tunnels and approval queue. The CLI, MCP server and desktop app all share it, and the desktop app can be closed at any time.
+- **Watch, don't type.** The session monitor is a read-only terminal: you see every command, its output, exit code and duration, live or replayed.
 
-环境要求：Rust 1.85+、Node.js 22.12+、npm 10+。
+## How it works
+
+```text
+your agent ──CLI / MCP──┐
+                        ▼
+Electron UI ──IPC──► main process ──local socket──► hostlane daemon ──SSH/SFTP──► servers
+                                                    ├─ connection pool
+                                                    ├─ exec / background jobs
+                                                    ├─ file operations
+                                                    ├─ tunnels
+                                                    ├─ port discovery
+                                                    ├─ policy engine / approvals
+                                                    └─ audit log (SQLite)
+```
+
+- `hostlane` is a single binary: the CLI, the daemon (`hostlane daemon …`) and, later, the MCP server (`hostlane mcp`).
+- Clients talk to the daemon over newline-delimited JSON-RPC 2.0 on a per-user socket with `0600` permissions.
+- Errors carry a stable `kind` and a `hint` written for agents, so they can decide the next step without parsing prose.
+
+Details: [architecture and protocol](docs/architecture.md) (Chinese).
+
+## Quick start
+
+There are no prebuilt binaries yet; build from source.
+
+**Requirements:** Rust 1.85+, Node.js 22.12+ and npm 10+.
 
 ```bash
-# Rust：构建、测试（测试会同时重新生成桌面端的 TS 协议类型）
+git clone https://github.com/rzh-98/Hostlane.git && cd Hostlane
+
+# Daemon + CLI (tests also regenerate the desktop's TypeScript protocol types)
 cargo build
 cargo test --workspace
 
-# CLI
 ./target/debug/hostlane daemon start
 ./target/debug/hostlane hosts
 ./target/debug/hostlane --json status
 ./target/debug/hostlane daemon stop
 
-# 桌面端（开发模式会使用 target/debug/hostlane）
+# Desktop app (development mode uses target/debug/hostlane and starts the daemon if needed)
 cd apps/desktop
 npm install
 npm run dev
 ```
 
-### 环境变量
+### CLI
 
-| 变量 | 作用 |
-| --- | --- |
-| `HOSTLANE_SOCKET` | 覆盖 socket 路径 |
-| `HOSTLANE_DATA_DIR` | 覆盖数据目录（日志、数据库） |
-| `HOSTLANE_SSH_CONFIG` | 覆盖 ssh_config 路径，便于测试 |
-| `HOSTLANE_BIN` | 桌面端使用的 `hostlane` 程序路径 |
+Every command accepts `--json`. On success, the result goes to stdout; on failure, the exit code is 1 and stdout holds `{"error":{"kind","message","hint"}}`.
 
-不想影响真实环境时，可以把这些变量都指向临时目录：
+| Command                             | What it does                                                                                  |
+| ----------------------------------- | --------------------------------------------------------------------------------------------- |
+| `hostlane status`                   | Show whether the daemon is running, its version, PID and socket                               |
+| `hostlane hosts`                    | List hosts from `~/.ssh/config` (`Include`, wildcard blocks and first-value-wins are honored) |
+| `hostlane call <method> '<params>'` | Send a raw JSON-RPC call to the daemon                                                        |
+| `hostlane daemon start` / `stop`    | Start the daemon in the background, or ask it to exit                                         |
+| `hostlane daemon run`               | Run the daemon in the foreground                                                              |
+| `hostlane daemon socket-path`       | Print the socket path clients use                                                             |
+
+### Environment variables
+
+| Variable              | Effect                                        |
+| --------------------- | --------------------------------------------- |
+| `HOSTLANE_SOCKET`     | Override the socket path                      |
+| `HOSTLANE_DATA_DIR`   | Override the data directory (logs, database)  |
+| `HOSTLANE_SSH_CONFIG` | Override the `ssh_config` path                |
+| `HOSTLANE_BIN`        | The `hostlane` binary used by the desktop app |
+
+To try things without touching your real setup, point all of them at a temporary directory:
 
 ```bash
 export HOSTLANE_SOCKET=/tmp/hl/hostlane.sock HOSTLANE_DATA_DIR=/tmp/hl HOSTLANE_SSH_CONFIG=/tmp/hl/ssh_config
 ```
+
+## Use it from your agent
+
+Until the MCP server lands in M6, agents use the CLI. Add this to your project's `AGENTS.md` or `CLAUDE.md`:
+
+```markdown
+## Remote servers
+
+Operate servers through the `hostlane` CLI; do not run ssh directly.
+
+- Run `hostlane --json hosts` first to see the available hosts.
+- Always pass `--json`; on failure, read error.kind and error.hint to decide the next step.
+```
+
+The desktop app's Integrations page has the same snippet with a copy button. In M6 it will also provide ready-made MCP config for Codex, Claude Code and Cursor.
+
+## Roadmap
+
+| Milestone                 | Scope                                                                                        | Status  |
+| ------------------------- | -------------------------------------------------------------------------------------------- | ------- |
+| **M0** Skeleton           | Rust workspace, daemon, local socket JSON-RPC, CLI, `~/.ssh/config` import, desktop shell    | ✅ Done |
+| **M1** Connect & exec     | `russh` connection pool, host fingerprint checks, `exec`, session monitor, audit log         | Next    |
+| **M2** Files              | `read_file`, `list_dir`, `search`, `apply_patch`, `write_file`                               | Planned |
+| **M3** Ports              | Port discovery, process mapping, HTTP probing, port notes, free-port lookup                  | Planned |
+| **M4** Tunnels            | Local forwarding, saved tunnels, auto-reconnect, conflict detection, temporary agent tunnels | Planned |
+| **M5** Policy             | Risk levels, rules, blocking approvals, global stop                                          | Planned |
+| **M6** MCP & distribution | `hostlane mcp`, Integrations page, user-level service registration, bundled binary           | Planned |
+
+The full requirement list, with IDs and priorities, is in [docs/requirements.md](docs/requirements.md) (Chinese).
+
+## Project structure
+
+```text
+├─ Cargo.toml                  Rust workspace
+├─ crates/
+│  ├─ hostlane-protocol/       Wire types: JSON-RPC frames, error codes, method params and results
+│  ├─ hostlane-core/           Daemon: socket server, handlers, ssh_config parser, client
+│  └─ hostlane-cli/            The `hostlane` binary: CLI + `daemon` subcommands
+├─ apps/desktop/               Electron app, based on Desktop-Starter
+│  └─ src/
+│     ├─ main/daemon.ts        Connects to the daemon and starts it on demand
+│     ├─ shared/protocol/      TypeScript types generated from hostlane-protocol (do not edit)
+│     └─ renderer/src/pages/   Hosts, Ports, Tunnels, Sessions, Approvals, Audit, Integrations, Settings
+└─ docs/                       Requirements, architecture, screenshots
+```
+
+Dependencies point one way: `hostlane-cli → hostlane-core → hostlane-protocol`. The desktop app depends only on the generated TypeScript types.
+
+## Development
+
+```bash
+# Rust
+cargo fmt --all
+cargo clippy --workspace --all-targets
+cargo test --workspace
+
+# Desktop (in apps/desktop)
+npm run typecheck
+npx prettier --write src
+```
+
+- Adding a JSON-RPC method takes five steps; see [Adding a method](docs/architecture.md#新增一个方法).
+- The desktop UI follows the [design system](apps/desktop/docs/design-system.md). `ui/` and `layout/` contain no product code.
+- The socket path rules live in both `crates/hostlane-core/src/paths.rs` and `apps/desktop/src/main/paths.ts`. Keep them in sync.
+
+## Security
+
+- The local socket is readable only by the current user (`0600`, inside a `0700` directory).
+- SSH keys, passwords and audit data stay on your machine. Credentials never reach the renderer process and are never logged.
+- The renderer runs sandboxed and can call only an explicit allowlist of daemon methods.
+- Hostlane sends no telemetry and talks to nothing except your servers.
+
+## FAQ
+
+<details>
+<summary>Why not just let the agent run <code>ssh</code>?</summary>
+
+It works until it doesn't: a new connection per command, no host-key policy, `sed -i` edits with no backup, nothing between the agent and `rm -rf` on production, and no record of what happened. Hostlane keeps one pooled connection per host and adds safe edits, approvals, tunnels and an audit log on top.
+
+</details>
+
+<details>
+<summary>Does Hostlane install anything on my servers?</summary>
+
+No. It uses only `sshd`, a POSIX shell and SFTP. When tools like `rg`, `tmux` or `docker` are present, Hostlane uses them; otherwise it falls back to `grep`, `nohup` and so on.
+
+</details>
+
+<details>
+<summary>Which LLM does it use?</summary>
+
+None. Hostlane is the runtime; the agent you already use is the brain.
+
+</details>
+
+<details>
+<summary>Can I type into the session terminal?</summary>
+
+No, by design. The session monitor is read-only so that everything that happens on a server goes through the same policy checks and audit log.
+
+</details>
+
+<details>
+<summary>Kubernetes? Windows?</summary>
+
+Port management covers systemd, Docker and docker-compose; Kubernetes is out of scope for now. macOS and Linux are the primary targets today; Windows named-pipe support is planned for V1.
+
+</details>
+
+## Scope
+
+Hostlane **does not** include an LLM, team collaboration or cloud sync, Kubernetes support, or human input in the terminal. It focuses on being a small, safe, local runtime that any agent can drive.
+
+## License
+
+[MIT](LICENSE)
