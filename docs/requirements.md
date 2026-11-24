@@ -188,7 +188,7 @@ agent 侧对应的工具包括：`ports_list`、`port_inspect`、`port_check`、
 | --- | --- |
 | **M0 骨架**（已完成） | Rust workspace、守护进程、本地 socket JSON-RPC、CLI、读取 `~/.ssh/config`、桌面端页面框架 |
 | **M1 连接与执行**（已完成） | `russh` 连接池、主机指纹校验、`exec`、会话监视器、审计日志 |
-| **M2 文件** | `read_file`、`list_dir`、`search`、`apply_patch`、`write_file` |
+| **M2 文件**（已完成） | `read_file`、`list_dir`、`search`、`apply_patch`、`write_file` |
 | **M3 端口** | 端口发现、进程关联、HTTP 探测、端口备注、空闲端口查找 |
 | **M4 隧道** | 本地转发、配置持久化、自动重连、冲突检测、agent 临时隧道 |
 | **M5 策略** | 风险分级、规则配置、阻塞式审批、急停 |

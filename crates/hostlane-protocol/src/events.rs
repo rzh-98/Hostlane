@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{Connection, ExecRecord, OutputStream};
+use crate::{AuditEntry, Connection, ExecRecord, FileChange, OutputStream};
 
 /// Pushed to `events.subscribe` connections as `{"method":"event","params":<Event>}`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -23,6 +23,15 @@ pub enum Event {
     },
     Connection {
         connection: Connection,
+    },
+    /// A file was written, patched, uploaded or reverted. `diff` is left out; read it
+    /// with `files.change`.
+    FileChanged {
+        change: FileChange,
+    },
+    /// A call was added to the audit log.
+    AuditAppended {
+        entry: AuditEntry,
     },
     /// This subscriber fell behind and missed events; reload state with the list methods.
     Lagged {

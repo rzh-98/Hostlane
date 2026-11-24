@@ -9,8 +9,11 @@ pub mod ssh_config;
 
 mod events;
 mod exec;
+mod files;
 mod handlers;
+mod patch;
 mod pool;
+mod remote;
 mod ssh;
 mod state;
 mod store;

@@ -12,7 +12,7 @@ use crate::ssh_config::{self, Entry, Loaded};
 use crate::store::Store;
 use crate::util::now_ms;
 
-/// Stored command output is kept this long.
+/// Stored command output and file backups are kept this long.
 const OUTPUT_RETENTION: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 #[derive(Debug, Clone)]
@@ -49,6 +49,7 @@ pub struct Daemon {
     pub(crate) data_dir: PathBuf,
     pub(crate) ssh_config_path: PathBuf,
     pub(crate) outputs_dir: PathBuf,
+    pub(crate) backups_dir: PathBuf,
     pub(crate) store: Store,
     pub(crate) events: EventBus,
     pub(crate) pool: Arc<Pool>,
@@ -73,6 +74,8 @@ impl Daemon {
         private_dir(&options.data_dir)?;
         let outputs_dir = options.data_dir.join("outputs");
         private_dir(&outputs_dir)?;
+        let backups_dir = options.data_dir.join("backups");
+        private_dir(&backups_dir)?;
         let store = Store::open(&options.data_dir.join("hostlane.db"))?;
         let events = EventBus::default();
         let ssh_dir = options
@@ -91,6 +94,7 @@ impl Daemon {
             data_dir: options.data_dir,
             ssh_config_path: options.ssh_config_path,
             outputs_dir,
+            backups_dir,
             store,
             pool: Arc::new(Pool::new(locations, events.clone())),
             events,
@@ -109,7 +113,11 @@ impl Daemon {
             Err(err) => tracing::warn!(%err, "cannot recover previous commands"),
         }
         let outputs = self.outputs_dir.clone();
-        tokio::task::spawn_blocking(move || crate::exec::prune_outputs(&outputs, OUTPUT_RETENTION));
+        let backups = self.backups_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::exec::prune_outputs(&outputs, OUTPUT_RETENTION);
+            crate::exec::prune_outputs(&backups, OUTPUT_RETENTION);
+        });
         tokio::spawn(self.pool.clone().maintain());
     }
 

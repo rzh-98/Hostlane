@@ -7,6 +7,13 @@ const cliCommands: [command: string, description: string][] = [
   ['hostlane --json hosts', '列出可用主机'],
   ['hostlane --json exec <host> -- <command>', '执行命令，返回退出码、stdout、stderr 和耗时'],
   ['hostlane --json output <output_id>', '读取被截断的完整输出'],
+  ['hostlane --json read <host> <path>', '读取文件，返回内容和 sha256'],
+  [
+    'hostlane --json edit <host> <path> --old … --new … --expect <sha256>',
+    '校验哈希后原子修改文件'
+  ],
+  ['hostlane --json search <host> <pattern> [path]', '用 rg（没有时用 grep）搜索文件内容'],
+  ['hostlane revert <change_id>', '撤销一次文件修改'],
   ['hostlane trust <host>', '核对并信任主机指纹（需要人确认）'],
   ['hostlane watch', '在终端里实时查看所有命令和输出'],
   ["hostlane --json call <method> '<params>'", '直接调用任意 JSON-RPC 方法'],
@@ -18,6 +25,9 @@ const agentsSnippet = `## 远程服务器
 - 先运行 \`hostlane --json hosts\` 查看可用主机。
 - 执行命令：\`hostlane --json exec <host> [--cwd DIR] [--timeout SECS] -- <command>\`。
 - 输出过长会被截断（truncated 为 true），用 \`hostlane --json output <output_id>\` 读取全文。
+- 用 Hostlane 改文件，不要用 sed 或 heredoc：\`hostlane --json read <host> <path>\` 会返回 sha256，把它作为 \`--expect\` 传给 \`edit --old … --new …\`、\`patch\`（stdin 传 unified diff）或 \`write\`（stdin 传内容）。遇到 FILE_CHANGED 时重新读取文件再修改。
+- 搜索用 \`hostlane --json search <host> <pattern> [path]\`，列目录用 \`hostlane --json ls <host> [path]\`。
+- 每次修改都会返回 change_id，用 \`hostlane revert <change_id>\` 撤销。
 - 命令都加 \`--json\`；失败时读取 error.kind 和 error.hint 决定下一步。
 - 遇到 HOST_KEY_UNKNOWN 或 HOST_KEY_CHANGED 时停下来告诉用户，不要自行信任主机密钥。
 - 设置 \`HOSTLANE_CLIENT=<agent 名称>\` 和 \`HOSTLANE_SESSION=<会话 ID>\`，审计和会话页会按它们区分来源。`

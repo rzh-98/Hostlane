@@ -9,6 +9,7 @@ mod audit;
 mod error;
 mod events;
 mod exec;
+mod files;
 mod hosts;
 mod rpc;
 mod status;
@@ -19,6 +20,12 @@ pub use events::{Event, Subscribed};
 pub use exec::{
     ExecList, ExecListParams, ExecParams, ExecRecord, ExecResult, ExecStatus, OutputChunk,
     OutputReadParams, OutputStream,
+};
+pub use files::{
+    FileChange, FileChangeParams, FileChangeResult, FileContent, FileDownloadParams,
+    FileDownloadResult, FileEdit, FileEntry, FileKind, FileList, FileListParams, FileOperation,
+    FilePatchParams, FileReadParams, FileSearchParams, FileSearchResult, FileUploadParams,
+    FileWriteParams, SearchMatch,
 };
 pub use hosts::{
     Connection, ConnectionState, ConnectionsList, Host, HostEnv, HostKeyInfo, HostParams,
@@ -42,6 +49,15 @@ pub mod method {
     pub const EXEC_RUN: &str = "exec.run";
     pub const EXEC_LIST: &str = "exec.list";
     pub const OUTPUT_READ: &str = "output.read";
+    pub const FILES_READ: &str = "files.read";
+    pub const FILES_LIST: &str = "files.list";
+    pub const FILES_SEARCH: &str = "files.search";
+    pub const FILES_WRITE: &str = "files.write";
+    pub const FILES_PATCH: &str = "files.patch";
+    pub const FILES_UPLOAD: &str = "files.upload";
+    pub const FILES_DOWNLOAD: &str = "files.download";
+    pub const FILES_CHANGE: &str = "files.change";
+    pub const FILES_REVERT: &str = "files.revert";
     pub const AUDIT_LIST: &str = "audit.list";
     /// Keeps the connection open and streams `event` notifications.
     pub const EVENTS_SUBSCRIBE: &str = "events.subscribe";
@@ -61,6 +77,15 @@ pub mod method {
         EXEC_RUN,
         EXEC_LIST,
         OUTPUT_READ,
+        FILES_READ,
+        FILES_LIST,
+        FILES_SEARCH,
+        FILES_WRITE,
+        FILES_PATCH,
+        FILES_UPLOAD,
+        FILES_DOWNLOAD,
+        FILES_CHANGE,
+        FILES_REVERT,
         AUDIT_LIST,
         EVENTS_SUBSCRIBE,
     ];

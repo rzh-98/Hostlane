@@ -38,6 +38,23 @@ pub fn sh_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', r"'\''"))
 }
 
+/// A remote path for a shell command line; `~` and `~/…` expand to the home directory.
+pub fn sh_path(path: &str) -> String {
+    if path == "~" {
+        "\"$HOME\"".to_string()
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        format!("\"$HOME\"/{}", sh_quote(rest))
+    } else {
+        sh_quote(path)
+    }
+}
+
+/// Lowercase hex SHA-256.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    data_encoding::HEXLOWER.encode(&sha2::Sha256::digest(bytes))
+}
+
 /// Longest prefix of `bytes` that does not end inside a UTF-8 sequence.
 pub fn utf8_prefix_len(bytes: &[u8]) -> usize {
     let len = bytes.len();
@@ -102,6 +119,9 @@ mod tests {
         assert_eq!(sh_quote("a b"), "'a b'");
         assert_eq!(sh_quote("it's"), r"'it'\''s'");
         assert_eq!(sh_quote(""), "''");
+        assert_eq!(sh_path("~"), "\"$HOME\"");
+        assert_eq!(sh_path("~/my app"), "\"$HOME\"/'my app'");
+        assert_eq!(sh_path("/srv"), "/srv");
     }
 
     #[test]

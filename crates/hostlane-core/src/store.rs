@@ -1,17 +1,18 @@
-//! SQLite storage: the append-only audit log (`calls`) and command records for the
-//! session monitor (`execs`). The database lives at `<data dir>/hostlane.db`.
+//! SQLite storage: the append-only audit log (`calls`), command records for the
+//! session monitor (`execs`) and file changes with their diffs (`file_changes`).
+//! The database lives at `<data dir>/hostlane.db`.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use hostlane_protocol::{
     AuditEntry, AuditList, AuditListParams, AuditOutcome, ClientInfo, ErrorKind, ExecListParams,
-    ExecRecord, ExecStatus, RpcError,
+    ExecRecord, ExecStatus, FileChange, FileOperation, RpcError,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value as Sql};
 use serde_json::{Value, json};
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS calls (
@@ -55,6 +56,26 @@ CREATE TABLE IF NOT EXISTS execs (
 );
 CREATE INDEX IF NOT EXISTS execs_started ON execs (started_at);
 CREATE INDEX IF NOT EXISTS execs_host ON execs (host, started_at);
+
+CREATE TABLE IF NOT EXISTS file_changes (
+    id TEXT PRIMARY KEY,
+    host TEXT NOT NULL,
+    path TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    client TEXT NOT NULL,
+    session TEXT,
+    created_at INTEGER NOT NULL,
+    created INTEGER NOT NULL,
+    deleted INTEGER NOT NULL,
+    previous_sha256 TEXT,
+    sha256 TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    added_lines INTEGER NOT NULL,
+    removed_lines INTEGER NOT NULL,
+    diff TEXT,
+    has_backup INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS file_changes_host ON file_changes (host, path, created_at);
 ";
 
 /// A call to append to the audit log.
@@ -68,6 +89,26 @@ pub struct NewCall {
     pub outcome: AuditOutcome,
     pub error: Option<RpcError>,
     pub result: Value,
+}
+
+impl NewCall {
+    /// The entry this call becomes once stored with `id`.
+    pub fn entry(&self, id: i64) -> AuditEntry {
+        AuditEntry {
+            id,
+            started_at: self.started_at,
+            finished_at: self.finished_at,
+            client: self.client.clone(),
+            host: self.host.clone(),
+            method: self.method.clone(),
+            params: self.params.clone(),
+            outcome: self.outcome,
+            error_kind: self.error.as_ref().map(RpcError::kind),
+            error_message: self.error.as_ref().map(|e| e.message.clone()),
+            result: self.result.clone(),
+            approver: None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -248,6 +289,49 @@ impl Store {
         .await
     }
 
+    pub async fn insert_file_change(&self, change: FileChange) -> Result<(), RpcError> {
+        self.with(move |conn| {
+            conn.execute(
+                "INSERT INTO file_changes (id, host, path, operation, client, session, created_at,
+                 created, deleted, previous_sha256, sha256, size, added_lines, removed_lines, diff,
+                 has_backup)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                params![
+                    change.id,
+                    change.host,
+                    change.path,
+                    enum_text(change.operation),
+                    change.client.name,
+                    change.client.session,
+                    change.created_at as i64,
+                    change.created,
+                    change.deleted,
+                    change.previous_sha256,
+                    change.sha256,
+                    change.size as i64,
+                    change.added_lines as i64,
+                    change.removed_lines as i64,
+                    change.diff,
+                    change.has_backup,
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn get_file_change(&self, id: String) -> Result<Option<FileChange>, RpcError> {
+        self.with(move |conn| {
+            conn.query_row(
+                "SELECT * FROM file_changes WHERE id = ?1",
+                [id],
+                file_change_from_row,
+            )
+            .optional()
+        })
+        .await
+    }
+
     /// Marks commands left running by a previous daemon as interrupted and audits them.
     pub async fn recover_interrupted(&self, now: u64) -> Result<usize, RpcError> {
         self.with(move |conn| {
@@ -354,6 +438,30 @@ fn exec_from_row(row: &Row) -> rusqlite::Result<ExecRecord> {
     })
 }
 
+fn file_change_from_row(row: &Row) -> rusqlite::Result<FileChange> {
+    let operation: String = row.get("operation")?;
+    Ok(FileChange {
+        id: row.get("id")?,
+        host: row.get("host")?,
+        path: row.get("path")?,
+        operation: enum_parse(&operation).unwrap_or(FileOperation::Write),
+        client: ClientInfo {
+            name: row.get("client")?,
+            session: row.get("session")?,
+        },
+        created_at: row.get::<_, i64>("created_at")? as u64,
+        created: row.get("created")?,
+        deleted: row.get("deleted")?,
+        previous_sha256: row.get("previous_sha256")?,
+        sha256: row.get("sha256")?,
+        size: row.get::<_, i64>("size")? as u64,
+        added_lines: row.get::<_, i64>("added_lines")? as u64,
+        removed_lines: row.get::<_, i64>("removed_lines")? as u64,
+        diff: row.get("diff")?,
+        has_backup: row.get("has_backup")?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,5 +528,39 @@ mod tests {
         assert_eq!(exec.status, ExecStatus::Interrupted);
         let audit = store.list_calls(AuditListParams::default()).await.unwrap();
         assert_eq!(audit.entries[0].outcome, AuditOutcome::Interrupted);
+    }
+
+    #[tokio::test]
+    async fn file_changes_round_trip() {
+        let store = Store::open_in_memory().unwrap();
+        let change = FileChange {
+            id: "fc-1".into(),
+            host: "web".into(),
+            path: "/etc/app.conf".into(),
+            operation: FileOperation::Patch,
+            client: ClientInfo::new("cli"),
+            created_at: 10,
+            created: false,
+            deleted: false,
+            previous_sha256: Some("aa".into()),
+            sha256: "bb".into(),
+            size: 3,
+            added_lines: 1,
+            removed_lines: 1,
+            diff: Some("-a\n+b\n".into()),
+            has_backup: true,
+        };
+        store.insert_file_change(change).await.unwrap();
+        let loaded = store.get_file_change("fc-1".into()).await.unwrap().unwrap();
+        assert_eq!(loaded.operation, FileOperation::Patch);
+        assert_eq!(loaded.previous_sha256.as_deref(), Some("aa"));
+        assert!(loaded.has_backup && !loaded.deleted);
+        assert!(
+            store
+                .get_file_change("fc-2".into())
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }

@@ -22,6 +22,8 @@ export const RENDERER_METHODS = [
   'connections.list',
   'exec.list',
   'output.read',
+  'files.change',
+  'files.revert',
   'audit.list'
 ] as const
 export type RendererMethod = (typeof RENDERER_METHODS)[number]

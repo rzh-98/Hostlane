@@ -3,8 +3,9 @@
 //! appended to the audit log.
 
 use hostlane_protocol::{
-    AuditListParams, AuditOutcome, ClientInfo, ConnectionsList, ErrorKind, ExecList,
-    ExecListParams, ExecParams, HostParams, HostsList, RpcError, TrustParams, TrustResult, method,
+    AuditEntry, AuditListParams, AuditOutcome, ClientInfo, ConnectionsList, ErrorKind, Event,
+    ExecList, ExecListParams, ExecParams, FileChangeParams, HostParams, HostsList, RpcError,
+    TrustParams, TrustResult, method,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -12,9 +13,10 @@ use serde_json::{Value, json};
 
 use crate::Daemon;
 use crate::exec;
+use crate::files;
 use crate::ssh::Trust;
 use crate::store::NewCall;
-use crate::util::now_ms;
+use crate::util::{now_ms, sha256_hex};
 
 /// Methods recorded in the audit log.
 const AUDITED: &[&str] = &[
@@ -22,6 +24,14 @@ const AUDITED: &[&str] = &[
     method::HOSTS_DISCONNECT,
     method::HOSTS_TRUST,
     method::EXEC_RUN,
+    method::FILES_READ,
+    method::FILES_LIST,
+    method::FILES_SEARCH,
+    method::FILES_WRITE,
+    method::FILES_PATCH,
+    method::FILES_UPLOAD,
+    method::FILES_DOWNLOAD,
+    method::FILES_REVERT,
 ];
 
 pub(crate) async fn dispatch(
@@ -38,8 +48,12 @@ pub(crate) async fn dispatch(
         .get("host")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let recorded_params = exec::redact_params(&params);
+    let recorded_params = redact_params(&params);
     let result = run(daemon, client, name, params).await;
+    let host = host.or_else(|| {
+        let value = result.as_ref().ok()?;
+        value.get("host")?.as_str().map(str::to_owned)
+    });
     let (outcome, error, summary) = match &result {
         Ok(value) => (AuditOutcome::Ok, None, summarize(value)),
         Err(err) => (
@@ -59,18 +73,52 @@ pub(crate) async fn dispatch(
         error,
         result: summary,
     };
-    if let Err(err) = daemon.store.append_call(call).await {
-        tracing::error!(%err, method = name, "cannot write the audit log");
+    let entry = call.entry(0);
+    match daemon.store.append_call(call).await {
+        Ok(id) => daemon.events.publish(Event::AuditAppended {
+            entry: AuditEntry { id, ..entry },
+        }),
+        Err(err) => tracing::error!(%err, method = name, "cannot write the audit log"),
     }
     result
 }
 
-/// The audited result without bulky output.
+/// Audited params: file content and edits are replaced by their size; the diff of a
+/// change is kept in the `file_changes` table instead.
+fn redact_params(params: &Value) -> Value {
+    let mut params = exec::redact_params(params);
+    let Some(object) = params.as_object_mut() else {
+        return params;
+    };
+    if let Some(content) = object.get("content").and_then(Value::as_str) {
+        let summary = json!({ "bytes": content.len(), "sha256": sha256_hex(content.as_bytes()) });
+        object.insert("content".into(), summary);
+    }
+    if let Some(edits) = object.get("edits").and_then(Value::as_array) {
+        let summary = json!({ "count": edits.len() });
+        object.insert("edits".into(), summary);
+    }
+    if let Some(diff) = object.get("diff").and_then(Value::as_str) {
+        let summary = json!({ "bytes": diff.len() });
+        object.insert("diff".into(), summary);
+    }
+    params
+}
+
+/// The audited result without bulky output: command output and file content are
+/// dropped, listings and search results are replaced by their counts.
 fn summarize(value: &Value) -> Value {
     let mut value = value.clone();
     if let Some(object) = value.as_object_mut() {
         object.remove("stdout");
         object.remove("stderr");
+        object.remove("content");
+        for (key, count) in [("entries", "entry_count"), ("matches", "match_count")] {
+            if let Some(items) = object.remove(key) {
+                let len = items.as_array().map_or(0, Vec::len);
+                object.insert(count.into(), json!(len));
+            }
+        }
     }
     value
 }
@@ -155,6 +203,21 @@ async fn run(
             })
         }
         method::OUTPUT_READ => to_value(exec::read_output(daemon, parse(params)?).await?),
+        method::FILES_READ => to_value(files::read(daemon, parse(params)?).await?),
+        method::FILES_LIST => to_value(files::list(daemon, parse(params)?).await?),
+        method::FILES_SEARCH => to_value(files::search(daemon, parse(params)?).await?),
+        method::FILES_WRITE => to_value(files::write(daemon, client, parse(params)?).await?),
+        method::FILES_PATCH => to_value(files::patch(daemon, client, parse(params)?).await?),
+        method::FILES_UPLOAD => to_value(files::upload(daemon, client, parse(params)?).await?),
+        method::FILES_DOWNLOAD => to_value(files::download(daemon, parse(params)?).await?),
+        method::FILES_CHANGE => {
+            let params: FileChangeParams = parse(params)?;
+            to_value(files::get_change(daemon, &params.change_id).await?)
+        }
+        method::FILES_REVERT => {
+            let params: FileChangeParams = parse(params)?;
+            to_value(files::revert(daemon, client, &params.change_id).await?)
+        }
         method::AUDIT_LIST => {
             let params: AuditListParams = parse_or_default(params)?;
             to_value(daemon.store.list_calls(params).await?)
@@ -196,4 +259,24 @@ fn parse_or_default<T: DeserializeOwned + Default>(params: Value) -> Result<T, R
 
 fn to_value(value: impl Serialize) -> Result<Value, RpcError> {
     serde_json::to_value(value).map_err(|err| RpcError::new(ErrorKind::Internal, err.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audit_drops_file_content() {
+        let params = json!({ "host": "h", "path": "/a", "content": "secret", "edits": [{}, {}] });
+        let recorded = redact_params(&params);
+        assert_eq!(recorded["content"]["bytes"], 6);
+        assert_eq!(recorded["edits"]["count"], 2);
+        assert!(!recorded.to_string().contains("secret"));
+
+        let result = json!({ "content": "x", "sha256": "ab", "matches": [1, 2] });
+        let summary = summarize(&result);
+        assert!(summary.get("content").is_none());
+        assert_eq!(summary["match_count"], 2);
+        assert_eq!(summary["sha256"], "ab");
+    }
 }

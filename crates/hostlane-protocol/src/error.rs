@@ -27,6 +27,14 @@ pub enum ErrorKind {
     /// The SSH connection dropped while a call was using it.
     ConnectionLost,
     OutputNotFound,
+    /// The remote file or directory does not exist.
+    FileNotFound,
+    /// The SSH user may not read or write the remote path.
+    PermissionDenied,
+    /// An edit or diff hunk did not match the file; `details` says which one.
+    PatchFailed,
+    /// Another SFTP failure; `message` carries the server's reason.
+    FileError,
 }
 
 impl ErrorKind {
@@ -49,6 +57,10 @@ impl ErrorKind {
             Self::AuthFailed => -32008,
             Self::ConnectionLost => -32009,
             Self::OutputNotFound => -32010,
+            Self::FileNotFound => -32011,
+            Self::PermissionDenied => -32012,
+            Self::PatchFailed => -32013,
+            Self::FileError => -32014,
         }
     }
 }

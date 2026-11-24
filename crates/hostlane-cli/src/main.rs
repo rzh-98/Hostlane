@@ -17,6 +17,8 @@ use hostlane_protocol::{
 };
 use serde_json::{Value, json};
 
+mod files;
+
 /// Lets your own agent operate remote servers over SSH, safely, from this machine.
 #[derive(Parser)]
 #[command(name = "hostlane", version, about)]
@@ -77,6 +79,8 @@ enum Command {
         #[arg(long)]
         limit: Option<u64>,
     },
+    #[command(flatten)]
+    Files(files::FileCommand),
     /// Open the pooled connection to a host and show its host key.
     Connect { host: String },
     /// Trust a host's key after you have verified its fingerprint.
@@ -208,6 +212,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             offset,
             limit,
         } => output(&client, output_id, stream.into(), offset, limit, json).await?,
+        Command::Files(command) => files::run(&client, command, json).await?,
         Command::Connect { host } => connect(&client, &host, json).await?,
         Command::Trust { host, fingerprint } => trust(&client, &host, fingerprint, json).await?,
         Command::Disconnect { host } => {
@@ -677,6 +682,8 @@ async fn watch(client: &Client, host: Option<String>, json: bool) -> Result<()> 
             Event::ExecStarted { exec } | Event::ExecFinished { exec } => Some(exec.host.clone()),
             Event::ExecOutput { id, .. } => hosts_by_exec.get(id).cloned(),
             Event::Connection { connection } => Some(connection.host.clone()),
+            Event::FileChanged { change } => Some(change.host.clone()),
+            Event::AuditAppended { entry } => entry.host.clone(),
             Event::Lagged { .. } => None,
         };
         if let (Some(filter), Some(event_host)) = (&host, &event_host)
@@ -712,7 +719,18 @@ async fn watch(client: &Client, host: Option<String>, json: bool) -> Result<()> 
                     .unwrap_or_default();
                 println!("[{}] {}{duration}", exec.host, exec_outcome(&exec));
             }
-            Event::Connection { .. } => {}
+            Event::Connection { .. } | Event::AuditAppended { .. } => {}
+            Event::FileChanged { change } => {
+                let what = if change.deleted {
+                    "removed".to_string()
+                } else {
+                    format!("+{} -{}", change.added_lines, change.removed_lines)
+                };
+                println!(
+                    "[{}] {} {:?} {} ({what}) · {}",
+                    change.host, change.client.name, change.operation, change.path, change.id
+                );
+            }
             Event::Lagged { skipped } => eprintln!("(missed {skipped} events)"),
         }
     }

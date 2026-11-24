@@ -20,9 +20,12 @@ glob = "0.3"
 hmac = "0.13"
 rusqlite = { version = "0.43", features = ["bundled"] }
 russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2"] }
+russh-sftp = "4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.11"
+sha2 = "0.11"
+similar = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal", "sync", "time", "fs"] }
 tracing = "0.1"

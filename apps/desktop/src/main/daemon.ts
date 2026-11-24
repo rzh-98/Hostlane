@@ -11,7 +11,7 @@ import { socketPath } from './paths'
 const CALL_TIMEOUT_MS = 10_000
 /** Connecting may wait for the SSH handshake and every jump host. */
 const SLOW_CALL_TIMEOUT_MS = 60_000
-const SLOW_METHODS = new Set(['hosts.connect', 'hosts.trust'])
+const SLOW_METHODS = new Set(['hosts.connect', 'hosts.trust', 'files.revert'])
 const START_TIMEOUT_MS = 15_000
 const RESUBSCRIBE_MIN_MS = 1_000
 const RESUBSCRIBE_MAX_MS = 10_000

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { RefreshCw, ScrollText, TriangleAlert } from 'lucide-react'
 import { callHostlane, daemonStore } from '@/app/daemon'
 import { DaemonOffline } from '@/app/DaemonOffline'
+import { DiffDialog } from '@/app/DiffDialog'
 import { useHostlaneEvent } from '@/app/events'
 import { formatDuration, formatTime } from '@/app/format'
 import { OutputDialog } from '@/app/OutputDialog'
@@ -40,7 +41,15 @@ const methodLabels: Record<string, string> = {
   'exec.run': '执行命令',
   'hosts.connect': '连接',
   'hosts.disconnect': '断开',
-  'hosts.trust': '信任主机密钥'
+  'hosts.trust': '信任主机密钥',
+  'files.read': '读取文件',
+  'files.list': '列出目录',
+  'files.search': '搜索文件',
+  'files.write': '写入文件',
+  'files.patch': '修改文件',
+  'files.upload': '上传文件',
+  'files.download': '下载文件',
+  'files.revert': '撤销文件修改'
 }
 
 const errorLabels: Partial<Record<string, string>> = {
@@ -50,7 +59,12 @@ const errorLabels: Partial<Record<string, string>> = {
   AUTH_FAILED: '认证失败',
   HOST_UNREACHABLE: '无法连接',
   HOST_NOT_FOUND: '主机不存在',
-  INVALID_PARAMS: '参数错误'
+  INVALID_PARAMS: '参数错误',
+  FILE_CHANGED: '文件已变化',
+  FILE_NOT_FOUND: '文件不存在',
+  PERMISSION_DENIED: '无权限',
+  PATCH_FAILED: '补丁不匹配',
+  FILE_ERROR: '文件错误'
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -61,7 +75,17 @@ function summary(entry: AuditEntry): string {
   const params = record(entry.params)
   if (typeof params.command === 'string') return params.command
   if (typeof params.fingerprint === 'string') return params.fingerprint
+  if (typeof params.pattern === 'string') return params.pattern
+  const result = record(entry.result)
+  for (const value of [params.path, params.remote_path, result.path, params.change_id]) {
+    if (typeof value === 'string') return value
+  }
   return ''
+}
+
+function changeId(entry: AuditEntry): string | null {
+  const id = record(entry.result).change_id
+  return typeof id === 'string' ? id : null
 }
 
 function outputId(entry: AuditEntry): string | null {
@@ -103,6 +127,7 @@ export function AuditPage() {
   const [clients, setClients] = useState<string[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [viewing, setViewing] = useState<AuditEntry | null>(null)
+  const [diffing, setDiffing] = useState<string | null>(null)
   const request = useRef(0)
 
   const load = useCallback(
@@ -149,7 +174,7 @@ export function AuditPage() {
   const refreshTimer = useRef<number | undefined>(undefined)
   useEffect(() => () => window.clearTimeout(refreshTimer.current), [])
   useHostlaneEvent((event) => {
-    if (event.type !== 'exec_finished' && event.type !== 'subscribed') return
+    if (event.type !== 'audit_appended' && event.type !== 'subscribed') return
     if (entries.length > PAGE_SIZE) return
     window.clearTimeout(refreshTimer.current)
     refreshTimer.current = window.setTimeout(() => void load(), REFRESH_DELAY_MS)
@@ -221,7 +246,7 @@ export function AuditPage() {
           description={
             filtered
               ? '调整筛选条件后再试。'
-              : 'agent 执行命令、连接主机和信任主机密钥时，都会在这里留下不可修改的记录。'
+              : 'agent 执行命令、读写文件、连接主机和信任主机密钥时，都会在这里留下不可修改的记录。'
           }
         />
       ) : (
@@ -261,7 +286,11 @@ export function AuditPage() {
           </div>
           <div className="min-w-0 flex-1 overflow-y-auto">
             {selected ? (
-              <AuditDetail entry={selected} onViewOutput={() => setViewing(selected)} />
+              <AuditDetail
+                entry={selected}
+                onViewOutput={() => setViewing(selected)}
+                onViewDiff={setDiffing}
+              />
             ) : (
               <EmptyState icon={<ScrollText />} title="选择一条记录查看详情" />
             )}
@@ -274,12 +303,20 @@ export function AuditPage() {
         title={viewing ? summary(viewing) : ''}
         onClose={() => setViewing(null)}
       />
+      <DiffDialog changeId={diffing} onClose={() => setDiffing(null)} />
     </Page>
   )
 }
 
-function AuditDetail({ entry, onViewOutput }: { entry: AuditEntry; onViewOutput: () => void }) {
+interface AuditDetailProps {
+  entry: AuditEntry
+  onViewOutput: () => void
+  onViewDiff: (changeId: string) => void
+}
+
+function AuditDetail({ entry, onViewOutput, onViewDiff }: AuditDetailProps) {
   const output = outputId(entry)
+  const change = changeId(entry)
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-8 p-page">
       <header className="flex flex-col gap-1.5">
@@ -298,10 +335,16 @@ function AuditDetail({ entry, onViewOutput }: { entry: AuditEntry; onViewOutput:
         title="调用"
         divided
         actions={
-          output && (
+          output ? (
             <Button size="sm" onClick={onViewOutput}>
               查看完整输出
             </Button>
+          ) : (
+            change && (
+              <Button size="sm" onClick={() => onViewDiff(change)}>
+                查看 diff
+              </Button>
+            )
           )
         }
       >

@@ -320,6 +320,26 @@ impl Pool {
         })
     }
 
+    /// Leases a slot and opens a session channel. A pooled connection that died
+    /// since its last use is replaced once.
+    pub async fn open_channel(
+        &self,
+        entry: &Entry,
+        loaded: &Loaded,
+    ) -> Result<(Lease, Channel<Msg>), RpcError> {
+        let lease = self.lease(entry, loaded).await?;
+        match lease.open_session().await {
+            Ok(channel) => Ok((lease, channel)),
+            Err(_) => {
+                drop(lease);
+                self.disconnect(&entry.host.id).await;
+                let lease = self.lease(entry, loaded).await?;
+                let channel = lease.open_session().await?;
+                Ok((lease, channel))
+            }
+        }
+    }
+
     /// Closes the connection to `host`. Returns false if there was none.
     pub async fn disconnect(&self, host: &str) -> bool {
         let slot = self

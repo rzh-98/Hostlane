@@ -16,7 +16,9 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use crate::Daemon;
 use crate::pool::Lease;
 use crate::ssh_config::{Entry, Loaded};
-use crate::util::{Utf8Chunker, new_id, now_ms, sh_quote, utf8_prefix_len, utf8_skip_continuation};
+use crate::util::{
+    Utf8Chunker, new_id, now_ms, sh_path, sh_quote, utf8_prefix_len, utf8_skip_continuation,
+};
 
 pub const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 pub const MAX_TIMEOUT_MS: u64 = 6 * 60 * 60 * 1000;
@@ -57,14 +59,7 @@ fn valid_env_name(name: &str) -> bool {
 pub fn build_command(params: &ExecParams) -> Result<String, RpcError> {
     let mut script = String::new();
     if let Some(cwd) = params.cwd.as_deref().filter(|c| !c.is_empty()) {
-        let target = if cwd == "~" {
-            "\"$HOME\"".to_string()
-        } else if let Some(rest) = cwd.strip_prefix("~/") {
-            format!("\"$HOME\"/{}", sh_quote(rest))
-        } else {
-            sh_quote(cwd)
-        };
-        script.push_str(&format!("cd {target} || exit 1\n"));
+        script.push_str(&format!("cd {} || exit 1\n", sh_path(cwd)));
     }
     for (name, value) in params.env.iter().flatten() {
         if !valid_env_name(name) {
@@ -243,17 +238,7 @@ pub async fn run(
         .unwrap_or(DEFAULT_MAX_OUTPUT)
         .clamp(MIN_MAX_OUTPUT, MAX_MAX_OUTPUT) as usize;
 
-    let mut lease = daemon.pool.lease(entry, loaded).await?;
-    let channel = match lease.open_session().await {
-        Ok(channel) => channel,
-        Err(_) => {
-            // The pooled connection may have died since its last use: reconnect once.
-            drop(lease);
-            daemon.pool.disconnect(&entry.host.id).await;
-            lease = daemon.pool.lease(entry, loaded).await?;
-            lease.open_session().await?
-        }
-    };
+    let (lease, channel) = daemon.pool.open_channel(entry, loaded).await?;
 
     let id = new_id("ex");
     let started = Instant::now();

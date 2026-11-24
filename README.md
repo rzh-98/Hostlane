@@ -4,7 +4,7 @@
   <p>An SSH runtime for the agent you already use. Let Codex, Claude Code or your own agent run commands, edit files, open tunnels and manage web-service ports on remote servers — from your machine, with fingerprint checks, approvals and an audit trail.</p>
   <p>No built-in LLM. Nothing to install on the server: <code>sshd</code> is enough.</p>
   <p>
-    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M1)-orange" />
+    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M2)-orange" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -21,7 +21,7 @@
 </div>
 
 > [!WARNING]
-> Hostlane is in early development. M0–M1 work today: the daemon, CLI, `~/.ssh/config` import, a pooled SSH client with host key checks, `exec`, the session monitor and the audit log. Files, ports, tunnels and approvals arrive in M2–M6. See the [roadmap](#roadmap).
+> Hostlane is in early development. M0–M2 work today: the daemon, CLI, `~/.ssh/config` import, a pooled SSH client with host key checks, `exec`, the session monitor, the audit log, and file operations (read, list, search, hash-checked atomic edits, upload, download, revert). Ports, tunnels and approvals arrive in M3–M6. See the [roadmap](#roadmap).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -87,6 +87,7 @@ cargo test --workspace
 ./target/debug/hostlane hosts
 ./target/debug/hostlane trust <host>              # first connection: verify and trust the host key
 ./target/debug/hostlane exec <host> -- uname -a
+./target/debug/hostlane read <host> /etc/hostname
 ./target/debug/hostlane daemon stop
 
 # Desktop app (development mode uses target/debug/hostlane and starts the daemon if needed)
@@ -105,6 +106,14 @@ Every command accepts `--json`. On success, the result goes to stdout; on failur
 | `hostlane hosts`                                                                   | List hosts from `~/.ssh/config` (`Include`, wildcard blocks and first-value-wins are honored) |
 | `hostlane exec <host> [--cwd DIR] [--env K=V] [--timeout SECS] [--stdin] -- <cmd>` | Run a command on a host. Without `--json`, the exit code is the remote one (124 on timeout)   |
 | `hostlane output <output_id> [--stream stderr] [--offset N]`                       | Read the full output of a truncated command (negative offsets count from the end)             |
+| `hostlane read <host> <path> [--offset N] [--limit N]`                             | Print a text file; its `sha256` and line range go to stderr                                   |
+| `hostlane ls <host> [path]`                                                        | List a directory                                                                              |
+| `hostlane search <host> <pattern> [path] [--glob G] [-F] [-i]`                     | Search file contents with `rg` on the server, or `grep -r` when `rg` is missing               |
+| `hostlane write <host> <path> [--expect SHA256 \| --overwrite] [--mode 0644]`      | Write stdin to a file atomically; replacing a file needs its current hash or `--overwrite`    |
+| `hostlane edit <host> <path> --old TEXT --new TEXT [--all] [--expect SHA256]`      | Replace exact text (repeat `--old`/`--new` for several edits)                                 |
+| `hostlane patch <host> <path> [--expect SHA256]`                                   | Apply a unified diff from stdin                                                               |
+| `hostlane upload` / `download <host> <from> <to>`                                  | Copy files to or from a server (uploads are atomic and checked like `write`)                  |
+| `hostlane diff` / `revert <change_id>`                                             | Show the diff of a file change, or undo it if the file has not changed since                  |
 | `hostlane trust <host> [--fingerprint SHA256:…]`                                   | Verify and trust a host key, recorded in Hostlane's own `known_hosts`                         |
 | `hostlane connect` / `disconnect <host>`                                           | Open or close the connection to a host                                                        |
 | `hostlane connections`                                                             | Show connection state, latency, open channels and host keys                                   |
@@ -145,6 +154,9 @@ Operate servers through the `hostlane` CLI; do not run ssh directly.
 - Run `hostlane --json hosts` first to see the available hosts.
 - Run commands with `hostlane --json exec <host> [--cwd DIR] [--timeout SECS] -- <command>`.
 - Long output is truncated (`truncated: true`); read all of it with `hostlane --json output <output_id>`.
+- Edit files with Hostlane, not with sed or heredocs: `hostlane --json read <host> <path>` returns `sha256`; pass it to `edit --old … --new …`, `patch` (unified diff on stdin) or `write` (content on stdin) as `--expect`. On FILE_CHANGED, read the file again and redo the edit.
+- Search with `hostlane --json search <host> <pattern> [path]`; list directories with `hostlane --json ls <host> [path]`.
+- Every edit returns a `change_id`; `hostlane revert <change_id>` undoes it.
 - Always pass `--json`; on failure, read error.kind and error.hint to decide the next step.
 - On HOST_KEY_UNKNOWN or HOST_KEY_CHANGED, stop and tell the user; never trust a host key yourself.
 - Set `HOSTLANE_CLIENT=<agent name>` and `HOSTLANE_SESSION=<session id>` so the audit log and Sessions page can tell callers apart.
@@ -158,8 +170,8 @@ The desktop app's Integrations page has the same snippet with a copy button. In 
 | ------------------------- | -------------------------------------------------------------------------------------------- | ------- |
 | **M0** Skeleton           | Rust workspace, daemon, local socket JSON-RPC, CLI, `~/.ssh/config` import, desktop shell    | ✅ Done |
 | **M1** Connect & exec     | `russh` connection pool, host fingerprint checks, `exec`, session monitor, audit log         | ✅ Done |
-| **M2** Files              | `read_file`, `list_dir`, `search`, `apply_patch`, `write_file`                               | Next    |
-| **M3** Ports              | Port discovery, process mapping, HTTP probing, port notes, free-port lookup                  | Planned |
+| **M2** Files              | `read_file`, `list_dir`, `search`, `apply_patch`, `write_file`                               | ✅ Done |
+| **M3** Ports              | Port discovery, process mapping, HTTP probing, port notes, free-port lookup                  | Next    |
 | **M4** Tunnels            | Local forwarding, saved tunnels, auto-reconnect, conflict detection, temporary agent tunnels | Planned |
 | **M5** Policy             | Risk levels, rules, blocking approvals, global stop                                          | Planned |
 | **M6** MCP & distribution | `hostlane mcp`, Integrations page, user-level service registration, bundled binary           | Planned |
@@ -172,7 +184,7 @@ The full requirement list, with IDs and priorities, is in [docs/requirements.md]
 ├─ Cargo.toml                  Rust workspace
 ├─ crates/
 │  ├─ hostlane-protocol/       Wire types: JSON-RPC frames, error codes, method params and results
-│  ├─ hostlane-core/           Daemon: socket server, SSH pool, exec, audit (SQLite), client
+│  ├─ hostlane-core/           Daemon: socket server, SSH pool, exec, files (SFTP), audit (SQLite), client
 │  └─ hostlane-cli/            The `hostlane` binary: CLI + `daemon` subcommands
 ├─ apps/desktop/               Electron app, based on Desktop-Starter
 │  └─ src/
