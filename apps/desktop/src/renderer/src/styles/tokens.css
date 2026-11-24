@@ -1,0 +1,222 @@
+/*
+ * Design tokens — the single place to tune the look of the whole app.
+ *
+ * Every token below is also a Tailwind theme variable, so `bg-accent`,
+ * `text-fg-muted`, `h-control`, `rounded-md`, `text-sm` … all read from here.
+ * Components never use raw colors or pixel sizes; change a value here and
+ * every page follows.
+ *
+ *   Brand color ............ --brand-hue / --brand-chroma
+ *   Light / dark palettes .. @theme (light) and [data-theme='dark']
+ *   Density ................ [data-density='compact' | 'comfortable']
+ */
+
+:root {
+  /* Brand — OKLCH hue (0–360) and chroma (0–0.3).
+     258 blue · 285 violet · 160 green · 45 orange · 0 pink · 200 teal */
+  --brand-hue: 258;
+  --brand-chroma: 0.17;
+  /* Effective hue: the user's pick in Settings (--user-hue, set at runtime) or the brand default. */
+  --accent-hue: var(--user-hue, var(--brand-hue));
+
+  /* Neutrals carry a whisper of the brand hue so greys feel related to it. */
+  --neutral-hue: var(--accent-hue);
+  --neutral-chroma: 0.004;
+}
+
+@theme static {
+  /* ---------- Reset Tailwind defaults so only design tokens exist ---------- */
+  --color-*: initial;
+  --text-*: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+  --font-*: initial;
+
+  /* ---------- Typography ---------- */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', system-ui,
+    'PingFang SC', 'Microsoft YaHei UI', 'Noto Sans CJK SC', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+
+  --text-xs: 11px;
+  --text-xs--line-height: 16px;
+  --text-sm: 12px;
+  --text-sm--line-height: 16px;
+  --text-base: 13px;
+  --text-base--line-height: 20px;
+  --text-md: 14px;
+  --text-md--line-height: 20px;
+  --text-lg: 16px;
+  --text-lg--line-height: 24px;
+  --text-xl: 20px;
+  --text-xl--line-height: 28px;
+
+  /* ---------- Spacing ---------- */
+  /* Base unit for p-*, m-*, gap-* (p-2 = 2 × 4px). */
+  --spacing: 4px;
+  /* Named sizes: h-control, w-sidebar, px-page, … */
+  --spacing-control-sm: 24px;
+  --spacing-control: 28px;
+  --spacing-control-lg: 32px;
+  --spacing-row: 32px;
+  --spacing-toolbar: 44px;
+  --spacing-sidebar: 224px;
+  --spacing-page: 24px;
+  --spacing-traffic-light: 0px;
+
+  /* ---------- Radius ---------- */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* ---------- Colors (light) ---------- */
+  /* Surfaces */
+  --color-bg: oklch(0.985 var(--neutral-chroma) var(--neutral-hue));
+  --color-bg-subtle: oklch(0.965 var(--neutral-chroma) var(--neutral-hue));
+  --color-bg-raised: oklch(1 0 0);
+  --color-control: oklch(1 0 0);
+  --color-control-hover: oklch(from var(--color-control) calc(l - 0.025) c h);
+  --color-control-active: oklch(from var(--color-control) calc(l - 0.05) c h);
+  --color-overlay: oklch(0.2 0 0 / 0.32);
+  /* Text */
+  --color-fg: oklch(0.22 var(--neutral-chroma) var(--neutral-hue));
+  --color-fg-muted: oklch(0.45 var(--neutral-chroma) var(--neutral-hue));
+  --color-fg-subtle: oklch(0.58 var(--neutral-chroma) var(--neutral-hue));
+  /* Lines */
+  --color-border: oklch(0.915 var(--neutral-chroma) var(--neutral-hue));
+  --color-border-strong: oklch(0.85 var(--neutral-chroma) var(--neutral-hue));
+  /* Interaction fills, layered over any surface */
+  --color-hover: oklch(0.2 0 0 / 0.05);
+  --color-active: oklch(0.2 0 0 / 0.09);
+  /* Accent — primary actions, selection, focus */
+  --color-accent: oklch(0.56 var(--brand-chroma) var(--accent-hue));
+  --color-accent-hover: oklch(from var(--color-accent) calc(l - 0.04) c h);
+  --color-accent-active: oklch(from var(--color-accent) calc(l - 0.08) c h);
+  --color-accent-fg: oklch(1 0 0);
+  --color-accent-subtle: oklch(from var(--color-accent) l c h / 0.12);
+  --color-accent-text: oklch(from var(--color-accent) calc(l - 0.06) c h);
+  --color-focus: oklch(from var(--color-accent) l c h / 0.7);
+  /* Status */
+  --color-danger: oklch(0.57 0.2 27);
+  --color-danger-hover: oklch(from var(--color-danger) calc(l - 0.04) c h);
+  --color-danger-subtle: oklch(from var(--color-danger) l c h / 0.1);
+  --color-danger-text: oklch(from var(--color-danger) calc(l - 0.05) c h);
+  --color-success: oklch(0.6 0.14 152);
+  --color-success-subtle: oklch(from var(--color-success) l c h / 0.14);
+  --color-success-text: oklch(from var(--color-success) calc(l - 0.08) c h);
+  --color-warning: oklch(0.74 0.15 70);
+  --color-warning-subtle: oklch(from var(--color-warning) l c h / 0.18);
+  --color-warning-text: oklch(from var(--color-warning) calc(l - 0.22) c h);
+  --color-white: oklch(1 0 0);
+
+  /* ---------- Elevation (popovers only; layout uses hairlines) ---------- */
+  --shadow-popover: 0 0 0 0.5px oklch(0 0 0 / 0.04), 0 4px 16px -2px oklch(0 0 0 / 0.14);
+  --shadow-dialog: 0 0 0 0.5px oklch(0 0 0 / 0.06), 0 16px 48px -8px oklch(0 0 0 / 0.28);
+
+  /* ---------- Motion ---------- */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --animate-pop-in: pop-in 120ms var(--ease-out);
+  --animate-pop-out: pop-out 80ms ease-in forwards;
+  --animate-fade-in: fade-in 140ms var(--ease-out);
+  --animate-fade-out: fade-out 100ms ease-in forwards;
+  --animate-dialog-in: dialog-in 160ms var(--ease-out);
+
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
+  @keyframes pop-out {
+    to {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes fade-out {
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes dialog-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.98);
+    }
+  }
+}
+
+/* ---------- Dark palette ---------- */
+[data-theme='dark'] {
+  color-scheme: dark;
+  --neutral-chroma: 0.006;
+
+  --color-bg: oklch(0.215 var(--neutral-chroma) var(--neutral-hue));
+  --color-bg-subtle: oklch(0.19 var(--neutral-chroma) var(--neutral-hue));
+  --color-bg-raised: oklch(0.255 var(--neutral-chroma) var(--neutral-hue));
+  --color-control: oklch(0.255 var(--neutral-chroma) var(--neutral-hue));
+  --color-control-hover: oklch(from var(--color-control) calc(l + 0.03) c h);
+  --color-control-active: oklch(from var(--color-control) calc(l + 0.06) c h);
+  --color-overlay: oklch(0 0 0 / 0.5);
+
+  --color-fg: oklch(0.94 var(--neutral-chroma) var(--neutral-hue));
+  --color-fg-muted: oklch(0.74 var(--neutral-chroma) var(--neutral-hue));
+  --color-fg-subtle: oklch(0.6 var(--neutral-chroma) var(--neutral-hue));
+
+  --color-border: oklch(0.29 var(--neutral-chroma) var(--neutral-hue));
+  --color-border-strong: oklch(0.36 var(--neutral-chroma) var(--neutral-hue));
+
+  --color-hover: oklch(1 0 0 / 0.06);
+  --color-active: oklch(1 0 0 / 0.1);
+
+  --color-accent: oklch(0.62 var(--brand-chroma) var(--accent-hue));
+  --color-accent-hover: oklch(from var(--color-accent) calc(l + 0.04) c h);
+  --color-accent-active: oklch(from var(--color-accent) calc(l - 0.04) c h);
+  --color-accent-subtle: oklch(from var(--color-accent) l c h / 0.22);
+  --color-accent-text: oklch(from var(--color-accent) calc(l + 0.14) calc(c * 0.8) h);
+
+  --color-danger: oklch(0.62 0.19 25);
+  --color-danger-hover: oklch(from var(--color-danger) calc(l + 0.04) c h);
+  --color-danger-subtle: oklch(from var(--color-danger) l c h / 0.18);
+  --color-danger-text: oklch(from var(--color-danger) calc(l + 0.12) c h);
+  --color-success-subtle: oklch(from var(--color-success) l c h / 0.2);
+  --color-success-text: oklch(from var(--color-success) calc(l + 0.14) c h);
+  --color-warning-subtle: oklch(from var(--color-warning) l c h / 0.2);
+  --color-warning-text: oklch(from var(--color-warning) calc(l + 0.08) c h);
+
+  --shadow-popover: 0 0 0 0.5px oklch(1 0 0 / 0.08), 0 6px 20px -2px oklch(0 0 0 / 0.5);
+  --shadow-dialog: 0 0 0 0.5px oklch(1 0 0 / 0.1), 0 20px 56px -8px oklch(0 0 0 / 0.6);
+}
+
+/* ---------- Density ---------- */
+[data-density='compact'] {
+  --spacing-control-sm: 22px;
+  --spacing-control: 24px;
+  --spacing-control-lg: 28px;
+  --spacing-row: 28px;
+  --spacing-toolbar: 40px;
+  --spacing-page: 16px;
+}
+
+[data-density='comfortable'] {
+  --text-base: 14px;
+  --text-sm: 13px;
+  --text-md: 15px;
+  --spacing-control-sm: 28px;
+  --spacing-control: 32px;
+  --spacing-control-lg: 36px;
+  --spacing-row: 36px;
+  --spacing-toolbar: 52px;
+  --spacing-sidebar: 240px;
+  --spacing-page: 32px;
+}
+
+/* Space reserved for macOS window controls when the toolbar is the leftmost element. */
+[data-platform='darwin'] {
+  --spacing-traffic-light: 72px;
+}

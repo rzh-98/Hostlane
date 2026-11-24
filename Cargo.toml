@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = ["crates/hostlane-protocol", "crates/hostlane-core", "crates/hostlane-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace.dependencies]
+hostlane-protocol = { path = "crates/hostlane-protocol" }
+hostlane-core = { path = "crates/hostlane-core" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+glob = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal", "sync", "time", "fs"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ts-rs = "11"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

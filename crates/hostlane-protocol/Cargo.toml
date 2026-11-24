@@ -1,0 +1,12 @@
+[package]
+name = "hostlane-protocol"
+description = "Wire types shared by the Hostlane daemon, CLI, MCP server and desktop app."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+ts-rs.workspace = true

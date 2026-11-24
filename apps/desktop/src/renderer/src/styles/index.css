@@ -1,0 +1,97 @@
+@import 'tailwindcss';
+@import './tokens.css';
+
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+/* `mac:` applies only when running on macOS (e.g. for window drag regions). */
+@custom-variant mac (&:where([data-platform='darwin'], [data-platform='darwin'] *));
+
+/* Keyboard focus — used by every interactive component. */
+@utility focus-ring {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+@utility focus-ring-inset {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
+/* Window drag region for the frameless macOS title bar. Interactive children stay clickable. */
+[data-platform='darwin'] [data-drag-region] {
+  -webkit-app-region: drag;
+}
+[data-platform='darwin']
+  [data-drag-region]
+  :is(button, input, textarea, select, a, [role], [tabindex]) {
+  -webkit-app-region: no-drag;
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: var(--text-base--line-height);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    /* Desktop apps don't select chrome text on click-drag. */
+    user-select: none;
+    cursor: default;
+  }
+
+  input,
+  textarea,
+  [contenteditable='true'],
+  .selectable {
+    user-select: text;
+  }
+
+  ::selection {
+    background: var(--color-accent-subtle);
+  }
+
+  button,
+  [role='button'] {
+    cursor: default;
+  }
+
+  /* Thin, unobtrusive scrollbars. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+    background-color: var(--color-border-strong);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-fg-subtle);
+  }
+  ::-webkit-scrollbar-corner,
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}
