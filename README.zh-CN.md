@@ -4,7 +4,7 @@
   <p>给你自己的 agent 用的 SSH 运行时。让 Codex、Claude Code 或自研 agent 在本机操作远程服务器：执行命令、修改文件、端口映射和管理 web 服务端口，并带有指纹校验、审批和审计。</p>
   <p>不内置 LLM；服务器端不需要安装任何组件，只要有 <code>sshd</code>。</p>
   <p>
-    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M2)-orange" />
+    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M3)-orange" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -21,7 +21,7 @@
 </div>
 
 > [!WARNING]
-> Hostlane 仍处于早期开发阶段。目前可用的是 M0–M2：守护进程、CLI、导入 `~/.ssh/config`、SSH 连接池与主机指纹校验、`exec`、会话监视器、审计日志，以及文件操作（读取、列目录、搜索、带哈希校验的原子修改、上传、下载、撤销）。端口、隧道和审批会在 M3–M6 陆续实现，见[路线图](#路线图)。
+> Hostlane 仍处于早期开发阶段。目前可用的是 M0–M3：守护进程、CLI、导入 `~/.ssh/config`、SSH 连接池与主机指纹校验、`exec`、会话监视器、审计日志、文件操作（读取、列目录、搜索、带哈希校验的原子修改、上传、下载、撤销），以及端口管理（端口发现，关联进程、systemd 和 Docker，HTTP/HTTPS 探测和证书有效期，备注，空闲端口查找）。隧道和审批会在 M4–M6 陆续实现，见[路线图](#路线图)。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -100,30 +100,35 @@ npm run dev
 
 所有命令都支持 `--json`。成功时 stdout 输出结果；失败时退出码为 1，stdout 输出 `{"error":{"kind","message","hint"}}`。
 
-| 命令                                                                               | 作用                                                                    |
-| ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `hostlane status`                                                                  | 查看守护进程是否在运行，以及版本、PID 和 socket                         |
-| `hostlane hosts`                                                                   | 列出 `~/.ssh/config` 中的主机（支持 `Include`、通配符块和首次赋值生效） |
-| `hostlane exec <host> [--cwd DIR] [--env K=V] [--timeout SECS] [--stdin] -- <cmd>` | 在远程主机上执行命令。不加 `--json` 时退出码等于远程退出码，超时为 124  |
-| `hostlane output <output_id> [--stream stderr] [--offset N]`                       | 读取被截断的完整输出（负偏移表示从末尾倒数）                            |
-| `hostlane read <host> <path> [--offset N] [--limit N]`                             | 输出文本文件；`sha256` 和行范围写到 stderr                              |
-| `hostlane ls <host> [path]`                                                        | 列出目录                                                                |
-| `hostlane search <host> <pattern> [path] [--glob G] [-F] [-i]`                     | 搜索文件内容：服务器上有 `rg` 时用 `rg`，否则用 `grep -r`               |
-| `hostlane write <host> <path> [--expect SHA256 \| --overwrite] [--mode 0644]`      | 把 stdin 原子写入文件；替换已有文件需要当前哈希或 `--overwrite`         |
-| `hostlane edit <host> <path> --old TEXT --new TEXT [--all] [--expect SHA256]`      | 精确替换文本（重复 `--old`/`--new` 可做多处修改）                       |
-| `hostlane patch <host> <path> [--expect SHA256]`                                   | 应用 stdin 中的 unified diff                                            |
-| `hostlane upload` / `download <host> <from> <to>`                                  | 上传或下载文件（上传同样原子替换并校验）                                |
-| `hostlane diff` / `revert <change_id>`                                             | 查看一次文件修改的 diff，或在文件之后没被改过时撤销它                   |
-| `hostlane trust <host> [--fingerprint SHA256:…]`                                   | 核对并信任主机指纹，写入 Hostlane 自己的 `known_hosts`                  |
-| `hostlane connect` / `disconnect <host>`                                           | 建立或断开到主机的连接                                                  |
-| `hostlane connections`                                                             | 查看连接状态、延迟、活动通道和主机指纹                                  |
-| `hostlane watch [--host H]`                                                        | 实时查看所有 agent 执行的命令和输出（只读）                             |
-| `hostlane history`                                                                 | 最近执行的命令                                                          |
-| `hostlane audit [--host H] [--client C]`                                           | 查看审计日志                                                            |
-| `hostlane call <method> '<params>'`                                                | 直接向守护进程发送 JSON-RPC 调用                                        |
-| `hostlane daemon start` / `stop`                                                   | 在后台启动守护进程，或让它退出                                          |
-| `hostlane daemon run`                                                              | 在前台运行守护进程                                                      |
-| `hostlane daemon socket-path`                                                      | 输出客户端使用的 socket 路径                                            |
+| 命令                                                                               | 作用                                                                     |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `hostlane status`                                                                  | 查看守护进程是否在运行，以及版本、PID 和 socket                          |
+| `hostlane hosts`                                                                   | 列出 `~/.ssh/config` 中的主机（支持 `Include`、通配符块和首次赋值生效）  |
+| `hostlane exec <host> [--cwd DIR] [--env K=V] [--timeout SECS] [--stdin] -- <cmd>` | 在远程主机上执行命令。不加 `--json` 时退出码等于远程退出码，超时为 124   |
+| `hostlane output <output_id> [--stream stderr] [--offset N]`                       | 读取被截断的完整输出（负偏移表示从末尾倒数）                             |
+| `hostlane read <host> <path> [--offset N] [--limit N]`                             | 输出文本文件；`sha256` 和行范围写到 stderr                               |
+| `hostlane ls <host> [path]`                                                        | 列出目录                                                                 |
+| `hostlane search <host> <pattern> [path] [--glob G] [-F] [-i]`                     | 搜索文件内容：服务器上有 `rg` 时用 `rg`，否则用 `grep -r`                |
+| `hostlane write <host> <path> [--expect SHA256 \| --overwrite] [--mode 0644]`      | 把 stdin 原子写入文件；替换已有文件需要当前哈希或 `--overwrite`          |
+| `hostlane edit <host> <path> --old TEXT --new TEXT [--all] [--expect SHA256]`      | 精确替换文本（重复 `--old`/`--new` 可做多处修改）                        |
+| `hostlane patch <host> <path> [--expect SHA256]`                                   | 应用 stdin 中的 unified diff                                             |
+| `hostlane upload` / `download <host> <from> <to>`                                  | 上传或下载文件（上传同样原子替换并校验）                                 |
+| `hostlane diff` / `revert <change_id>`                                             | 查看一次文件修改的 diff，或在文件之后没被改过时撤销它                    |
+| `hostlane ports <host> [--no-probe]`                                               | 列出监听的 TCP 端口，以及对应的进程、systemd 单元或容器、HTTP 响应和备注 |
+| `hostlane port <host> <port> [--server-name DOMAIN]`                               | 查看单个端口：地址、进程、服务、HTTP 状态、标题和 TLS 证书               |
+| `hostlane port-check <host> <port>`                                                | 检查端口是否被占用，占用时给出最近的空闲端口                             |
+| `hostlane free-port <host> [--from N] [--to N] [--count N]`                        | 查找空闲端口（默认 8000–9999），有备注的端口视为已预留                   |
+| `hostlane port-note <host> <port> [--name N] [--project P] [--note T]`             | 给端口命名并关联项目；不带任何字段时清除备注                             |
+| `hostlane trust <host> [--fingerprint SHA256:…]`                                   | 核对并信任主机指纹，写入 Hostlane 自己的 `known_hosts`                   |
+| `hostlane connect` / `disconnect <host>`                                           | 建立或断开到主机的连接                                                   |
+| `hostlane connections`                                                             | 查看连接状态、延迟、活动通道和主机指纹                                   |
+| `hostlane watch [--host H]`                                                        | 实时查看所有 agent 执行的命令和输出（只读）                              |
+| `hostlane history`                                                                 | 最近执行的命令                                                           |
+| `hostlane audit [--host H] [--client C]`                                           | 查看审计日志                                                             |
+| `hostlane call <method> '<params>'`                                                | 直接向守护进程发送 JSON-RPC 调用                                         |
+| `hostlane daemon start` / `stop`                                                   | 在后台启动守护进程，或让它退出                                           |
+| `hostlane daemon run`                                                              | 在前台运行守护进程                                                       |
+| `hostlane daemon socket-path`                                                      | 输出客户端使用的 socket 路径                                             |
 
 ### 环境变量
 
@@ -157,6 +162,8 @@ M6 提供 MCP Server 之前，agent 通过 CLI 使用 Hostlane。把下面这段
 - 用 Hostlane 改文件，不要用 sed 或 heredoc：`hostlane --json read <host> <path>` 会返回 `sha256`，把它作为 `--expect` 传给 `edit --old … --new …`、`patch`（stdin 传 unified diff）或 `write`（stdin 传内容）。遇到 FILE_CHANGED 时重新读取文件再修改。
 - 搜索用 `hostlane --json search <host> <pattern> [path]`，列目录用 `hostlane --json ls <host> [path]`。
 - 每次修改都会返回 `change_id`，用 `hostlane revert <change_id>` 撤销。
+- 部署服务前用 `hostlane --json free-port <host>` 或 `port-check <host> <port>` 选端口，不要猜；`hostlane --json ports <host>` 列出端口对应的进程、容器和 HTTP 状态，`port <host> <port>` 查看单个端口。
+- 用 `hostlane port-note <host> <port> --name … --project …` 记录新部署服务占用的端口。
 - 命令都加 `--json`；失败时读取 error.kind 和 error.hint 决定下一步。
 - 遇到 HOST_KEY_UNKNOWN 或 HOST_KEY_CHANGED 时停下来告诉用户，不要自行信任主机密钥。
 - 设置 `HOSTLANE_CLIENT=<agent 名称>` 和 `HOSTLANE_SESSION=<会话 ID>`，审计和会话页会按它们区分来源。
@@ -171,8 +178,8 @@ M6 提供 MCP Server 之前，agent 通过 CLI 使用 Hostlane。把下面这段
 | **M0** 骨架       | Rust workspace、守护进程、本地 socket JSON-RPC、CLI、读取 `~/.ssh/config`、桌面端页面框架 | ✅ 已完成 |
 | **M1** 连接与执行 | `russh` 连接池、主机指纹校验、`exec`、会话监视器、审计日志                                | ✅ 已完成 |
 | **M2** 文件       | `read_file`、`list_dir`、`search`、`apply_patch`、`write_file`                            | ✅ 已完成 |
-| **M3** 端口       | 端口发现、进程关联、HTTP 探测、端口备注、空闲端口查找                                     | 下一步    |
-| **M4** 隧道       | 本地转发、配置持久化、自动重连、冲突检测、agent 临时隧道                                  | 计划中    |
+| **M3** 端口       | 端口发现、进程关联、HTTP 探测、端口备注、空闲端口查找                                     | ✅ 已完成 |
+| **M4** 隧道       | 本地转发、配置持久化、自动重连、冲突检测、agent 临时隧道                                  | 下一步    |
 | **M5** 策略       | 风险分级、规则配置、阻塞式审批、急停                                                      | 计划中    |
 | **M6** MCP 与分发 | `hostlane mcp`、接入页、用户级服务注册、打包内置二进制                                    | 计划中    |
 
@@ -184,7 +191,7 @@ M6 提供 MCP Server 之前，agent 通过 CLI 使用 Hostlane。把下面这段
 ├─ Cargo.toml                  Rust workspace
 ├─ crates/
 │  ├─ hostlane-protocol/       线上传输的类型：JSON-RPC 帧、错误码、各方法的参数和结果
-│  ├─ hostlane-core/           守护进程：socket 服务、SSH 连接池、exec、文件（SFTP）、审计（SQLite）、客户端
+│  ├─ hostlane-core/           守护进程：socket 服务、SSH 连接池、exec、文件（SFTP）、端口、审计（SQLite）、客户端
 │  └─ hostlane-cli/            `hostlane` 二进制：CLI + `daemon` 子命令
 ├─ apps/desktop/               Electron 桌面端（基于 Desktop-Starter）
 │  └─ src/

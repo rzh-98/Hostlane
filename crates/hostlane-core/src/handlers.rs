@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use crate::Daemon;
 use crate::exec;
 use crate::files;
+use crate::ports;
 use crate::ssh::Trust;
 use crate::store::NewCall;
 use crate::util::{now_ms, sha256_hex};
@@ -32,6 +33,11 @@ const AUDITED: &[&str] = &[
     method::FILES_UPLOAD,
     method::FILES_DOWNLOAD,
     method::FILES_REVERT,
+    method::PORTS_LIST,
+    method::PORTS_INSPECT,
+    method::PORTS_CHECK,
+    method::PORTS_FIND_FREE,
+    method::PORTS_ANNOTATE,
 ];
 
 pub(crate) async fn dispatch(
@@ -106,18 +112,27 @@ fn redact_params(params: &Value) -> Value {
 }
 
 /// The audited result without bulky output: command output and file content are
-/// dropped, listings and search results are replaced by their counts.
+/// dropped, listings, search results and port tables are replaced by their counts.
 fn summarize(value: &Value) -> Value {
     let mut value = value.clone();
     if let Some(object) = value.as_object_mut() {
         object.remove("stdout");
         object.remove("stderr");
         object.remove("content");
-        for (key, count) in [("entries", "entry_count"), ("matches", "match_count")] {
-            if let Some(items) = object.remove(key) {
-                let len = items.as_array().map_or(0, Vec::len);
-                object.insert(count.into(), json!(len));
+        for (key, count) in [
+            ("entries", "entry_count"),
+            ("matches", "match_count"),
+            ("ports", "port_count"),
+        ] {
+            let Some(items) = object.get(key).and_then(Value::as_array) else {
+                continue;
+            };
+            if key == "ports" && items.iter().all(Value::is_number) {
+                continue;
             }
+            let len = items.len();
+            object.remove(key);
+            object.insert(count.into(), json!(len));
         }
     }
     value
@@ -218,6 +233,11 @@ async fn run(
             let params: FileChangeParams = parse(params)?;
             to_value(files::revert(daemon, client, &params.change_id).await?)
         }
+        method::PORTS_LIST => to_value(ports::list(daemon, parse(params)?).await?),
+        method::PORTS_INSPECT => to_value(ports::inspect(daemon, parse(params)?).await?),
+        method::PORTS_CHECK => to_value(ports::check(daemon, parse(params)?).await?),
+        method::PORTS_FIND_FREE => to_value(ports::find_free(daemon, parse(params)?).await?),
+        method::PORTS_ANNOTATE => to_value(ports::annotate(daemon, parse(params)?).await?),
         method::AUDIT_LIST => {
             let params: AuditListParams = parse_or_default(params)?;
             to_value(daemon.store.list_calls(params).await?)
@@ -278,5 +298,10 @@ mod tests {
         assert!(summary.get("content").is_none());
         assert_eq!(summary["match_count"], 2);
         assert_eq!(summary["sha256"], "ab");
+
+        let ports = summarize(&json!({ "ports": [{ "port": 22 }] }));
+        assert_eq!(ports["port_count"], 1);
+        let free = summarize(&json!({ "ports": [8000, 8001] }));
+        assert_eq!(free["ports"], json!([8000, 8001]));
     }
 }

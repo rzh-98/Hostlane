@@ -20,8 +20,9 @@ Hostlane/
 │  │     ├─ exec.rs                 exec.run / output.read：超时、截断、输出落盘
 │  │     ├─ files.rs                files.*：SFTP 读写、搜索、原子替换、备份和撤销
 │  │     ├─ patch.rs                文本修改（精确替换、unified diff）和 diff 摘要
-│  │     ├─ remote.rs               Hostlane 自己运行的辅助命令（搜索、mv 兜底）
-│  │     ├─ store.rs                SQLite：审计日志（只追加）、命令记录和文件修改记录
+│  │     ├─ ports/                  ports.*：端口发现（discover）、HTTP/HTTPS 探测（probe）、证书解析（cert）
+│  │     ├─ remote.rs               Hostlane 自己运行的辅助命令（搜索、mv 兜底、端口扫描）
+│  │     ├─ store.rs                SQLite：审计日志（只追加）、命令记录、文件修改记录和端口备注
 │  │     └─ events.rs               事件总线（broadcast）
 │  └─ hostlane-cli/              `hostlane` 二进制：CLI + `daemon` 子命令（之后加 `mcp`）
 ├─ apps/desktop/                 Electron 桌面端（基于 Desktop-Starter）
@@ -62,13 +63,13 @@ Electron 主进程 ◄─IPC─ 渲染进程（沙箱）────────
 
 数据目录中的文件：
 
-| 文件                                         | 内容                                                                                                                                                 |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hostlane.db`                                | SQLite（WAL）：`calls` 表是审计日志，由触发器禁止 UPDATE 和 DELETE；`execs` 表是会话监视器使用的命令记录；`file_changes` 表记录每次文件修改及其 diff |
-| `backups/<change_id>`                        | 文件被修改、上传覆盖或删除前的内容，权限 0600，保留 30 天，供 `files.revert` 使用                                                                    |
-| `outputs/<id>.stdout`、`outputs/<id>.stderr` | 命令的完整输出，权限 0600；每个流最多保存 64 MiB，保留 30 天                                                                                         |
-| `known_hosts`                                | Hostlane 信任的主机密钥。Hostlane 也会读取 ssh_config 同目录下的 `known_hosts`（或 `UserKnownHostsFile`），但只写这个文件                            |
-| `daemon.log`                                 | `hostlane daemon start` 启动时的日志                                                                                                                 |
+| 文件                                         | 内容                                                                                                                                                                              |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hostlane.db`                                | SQLite（WAL）：`calls` 表是审计日志，由触发器禁止 UPDATE 和 DELETE；`execs` 表是会话监视器使用的命令记录；`file_changes` 表记录每次文件修改及其 diff；`port_notes` 表保存端口备注 |
+| `backups/<change_id>`                        | 文件被修改、上传覆盖或删除前的内容，权限 0600，保留 30 天，供 `files.revert` 使用                                                                                                 |
+| `outputs/<id>.stdout`、`outputs/<id>.stderr` | 命令的完整输出，权限 0600；每个流最多保存 64 MiB，保留 30 天                                                                                                                      |
+| `known_hosts`                                | Hostlane 信任的主机密钥。Hostlane 也会读取 ssh_config 同目录下的 `known_hosts`（或 `UserKnownHostsFile`），但只写这个文件                                                         |
+| `daemon.log`                                 | `hostlane daemon start` 启动时的日志                                                                                                                                              |
 
 socket 文件权限为 0600，所在目录权限为 0700。启动时如果发现残留的 socket 文件，会先尝试连接：能连上说明已有守护进程在运行，此时拒绝启动；连不上则删除残留文件。
 
@@ -130,6 +131,11 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 | `files.download`   | `FileDownloadParams` | `FileDownloadResult`           | ✓    |
 | `files.change`     | `FileChangeParams`   | `FileChange`（含 diff）        |      |
 | `files.revert`     | `FileChangeParams`   | `FileChangeResult`             | ✓    |
+| `ports.list`       | `PortsListParams`    | `PortsList`                    | ✓    |
+| `ports.inspect`    | `PortParams`         | `PortsList`（只含该端口）      | ✓    |
+| `ports.check`      | `PortParams`         | `PortCheck`                    | ✓    |
+| `ports.find_free`  | `FindFreeParams`     | `FreePorts`                    | ✓    |
+| `ports.annotate`   | `PortAnnotateParams` | `PortAnnotated`                | ✓    |
 | `audit.list`       | `AuditListParams`    | `AuditList`                    |      |
 | `events.subscribe` | 无                   | `Subscribed`，之后推送 `Event` |      |
 
@@ -157,6 +163,28 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 - 所有操作都以 SSH 用户的身份执行，不使用 sudo；没有权限时返回 `PERMISSION_DENIED`。
 - 审计日志不记录文件内容：`content` 替换为字节数和 `sha256`，`edits` / `diff` 只记录数量或大小，读取结果去掉 `content`，列表和搜索结果只记录条数。diff 用 `files.change` 查看。
 
+端口（`ports.*`）的要点：
+
+- 一次扫描只在服务器上运行两条命令，不安装任何东西：
+  - 第一条列出监听的 TCP socket 和容器。Linux 上依次尝试 `ss -tlnp`、`netstat -tlnp`、`/proc/net/tcp*`；macOS/BSD 用 `netstat -an` 加 `lsof`；装了 docker 时再运行 `docker ps`。
+  - 第二条对持有 socket 的进程运行 `ps`（PID、父进程、用户、运行时长、命令行），并读取 `/proc/<pid>/cgroup`。
+- 同一端口的多个 socket（如 `0.0.0.0` 和 `::`）合并为一项。主进程是父进程不在同一端口上的那个（nginx master 而不是 worker）。
+- 服务关联的顺序：
+  1. cgroup 指向容器时，关联到该容器。
+  2. 端口是某个容器发布的端口时（包括 docker-proxy 和只有 iptables 规则、没有 socket 的情况），关联到该容器，并给出容器内端口和 compose 项目/服务。
+  3. cgroup 是 `*.service` 时，关联到 systemd 单元，并区分用户单元。
+- `bind` 由绑定地址推断可达范围（`loopback` / `private` / `public` / `all`），不考虑防火墙。
+- SSH 用户不是 root 时，其他用户的进程看不到，`warnings` 中会说明。
+- 探测通过 SSH 的 `direct-tcpip` 通道从服务器本机连接端口，端口不需要对外开放；需要 sshd 允许 TCP 转发（`AllowTcpForwarding`，默认开启），不允许时 `warnings` 中会说明。
+  - 发送 `GET /`：先发明文请求，443、8443 等端口先试 TLS。
+  - 服务器先发问候语的协议（SSH、SMTP、FTP、MySQL、Redis 等）只报告协议名。
+  - nginx/Go 对 HTTPS 端口的明文请求返回的 400 会触发 TLS 重试。连接后一直不响应的端口不再尝试 TLS。
+  - TLS 接受任何证书，只读取主体、签发者、SAN、有效期和是否自签名。
+  - 每个端口每次尝试 3 秒，最多 8 个并发，最多探测 64 个端口。
+  - `ports.inspect` 可以传 `server_name`，作为 Host 头和 SNI。
+- 备注（`ports.annotate`）保存在本机的 `port_notes` 表中，不会写到服务器上。有备注但没有在监听的端口也会出现在列表中（`listening: false`）。`ports.find_free` 和 `ports.check` 的建议端口会跳过正在监听、Docker 已发布和有备注的端口。
+- 审计日志中，端口列表只记录条数。
+
 ### 错误类型
 
 | kind                                                                                   | code            | 含义                                                                  |
@@ -176,6 +204,7 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 | `PERMISSION_DENIED`                                                                    | -32012          | SSH 用户无权读写该路径                                                |
 | `PATCH_FAILED`                                                                         | -32013          | 某处编辑或 hunk 与文件不匹配，没有写入任何内容                        |
 | `FILE_ERROR`                                                                           | -32014          | 其他 SFTP 错误，`message` 中带服务器给出的原因                        |
+| `REMOTE_COMMAND_FAILED`                                                                | -32015          | Hostlane 在服务器上运行的辅助命令（如端口扫描）失败或超时             |
 
 ### 新增一个方法
 

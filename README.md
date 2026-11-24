@@ -4,7 +4,7 @@
   <p>An SSH runtime for the agent you already use. Let Codex, Claude Code or your own agent run commands, edit files, open tunnels and manage web-service ports on remote servers — from your machine, with fingerprint checks, approvals and an audit trail.</p>
   <p>No built-in LLM. Nothing to install on the server: <code>sshd</code> is enough.</p>
   <p>
-    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M2)-orange" />
+    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M3)-orange" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -21,7 +21,7 @@
 </div>
 
 > [!WARNING]
-> Hostlane is in early development. M0–M2 work today: the daemon, CLI, `~/.ssh/config` import, a pooled SSH client with host key checks, `exec`, the session monitor, the audit log, and file operations (read, list, search, hash-checked atomic edits, upload, download, revert). Ports, tunnels and approvals arrive in M3–M6. See the [roadmap](#roadmap).
+> Hostlane is in early development. M0–M3 work today: the daemon, CLI, `~/.ssh/config` import, a pooled SSH client with host key checks, `exec`, the session monitor, the audit log, file operations (read, list, search, hash-checked atomic edits, upload, download, revert) and ports (discovery, process/systemd/Docker mapping, HTTP/HTTPS probing with certificate expiry, notes, free-port lookup). Tunnels and approvals arrive in M4–M6. See the [roadmap](#roadmap).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -114,6 +114,11 @@ Every command accepts `--json`. On success, the result goes to stdout; on failur
 | `hostlane patch <host> <path> [--expect SHA256]`                                   | Apply a unified diff from stdin                                                               |
 | `hostlane upload` / `download <host> <from> <to>`                                  | Copy files to or from a server (uploads are atomic and checked like `write`)                  |
 | `hostlane diff` / `revert <change_id>`                                             | Show the diff of a file change, or undo it if the file has not changed since                  |
+| `hostlane ports <host> [--no-probe]`                                               | List listening TCP ports with their process, systemd unit or container, HTTP answer and note  |
+| `hostlane port <host> <port> [--server-name DOMAIN]`                               | Show one port in detail: addresses, process, service, HTTP status, title, TLS certificate     |
+| `hostlane port-check <host> <port>`                                                | Check whether a port is in use; suggests the nearest free one                                 |
+| `hostlane free-port <host> [--from N] [--to N] [--count N]`                        | Find free ports (default 8000–9999); ports with a note count as reserved                      |
+| `hostlane port-note <host> <port> [--name N] [--project P] [--note T]`             | Name a port and its project; no fields clears the note                                        |
 | `hostlane trust <host> [--fingerprint SHA256:…]`                                   | Verify and trust a host key, recorded in Hostlane's own `known_hosts`                         |
 | `hostlane connect` / `disconnect <host>`                                           | Open or close the connection to a host                                                        |
 | `hostlane connections`                                                             | Show connection state, latency, open channels and host keys                                   |
@@ -157,6 +162,8 @@ Operate servers through the `hostlane` CLI; do not run ssh directly.
 - Edit files with Hostlane, not with sed or heredocs: `hostlane --json read <host> <path>` returns `sha256`; pass it to `edit --old … --new …`, `patch` (unified diff on stdin) or `write` (content on stdin) as `--expect`. On FILE_CHANGED, read the file again and redo the edit.
 - Search with `hostlane --json search <host> <pattern> [path]`; list directories with `hostlane --json ls <host> [path]`.
 - Every edit returns a `change_id`; `hostlane revert <change_id>` undoes it.
+- Before deploying a service, pick its port with `hostlane --json free-port <host>` or `port-check <host> <port>` instead of guessing. `hostlane --json ports <host>` shows which process, container and HTTP answer sits behind each port; `port <host> <port>` shows one.
+- Record the port a new service uses with `hostlane port-note <host> <port> --name … --project …`.
 - Always pass `--json`; on failure, read error.kind and error.hint to decide the next step.
 - On HOST_KEY_UNKNOWN or HOST_KEY_CHANGED, stop and tell the user; never trust a host key yourself.
 - Set `HOSTLANE_CLIENT=<agent name>` and `HOSTLANE_SESSION=<session id>` so the audit log and Sessions page can tell callers apart.
@@ -171,8 +178,8 @@ The desktop app's Integrations page has the same snippet with a copy button. In 
 | **M0** Skeleton           | Rust workspace, daemon, local socket JSON-RPC, CLI, `~/.ssh/config` import, desktop shell    | ✅ Done |
 | **M1** Connect & exec     | `russh` connection pool, host fingerprint checks, `exec`, session monitor, audit log         | ✅ Done |
 | **M2** Files              | `read_file`, `list_dir`, `search`, `apply_patch`, `write_file`                               | ✅ Done |
-| **M3** Ports              | Port discovery, process mapping, HTTP probing, port notes, free-port lookup                  | Next    |
-| **M4** Tunnels            | Local forwarding, saved tunnels, auto-reconnect, conflict detection, temporary agent tunnels | Planned |
+| **M3** Ports              | Port discovery, process mapping, HTTP probing, port notes, free-port lookup                  | ✅ Done |
+| **M4** Tunnels            | Local forwarding, saved tunnels, auto-reconnect, conflict detection, temporary agent tunnels | Next    |
 | **M5** Policy             | Risk levels, rules, blocking approvals, global stop                                          | Planned |
 | **M6** MCP & distribution | `hostlane mcp`, Integrations page, user-level service registration, bundled binary           | Planned |
 
@@ -184,7 +191,7 @@ The full requirement list, with IDs and priorities, is in [docs/requirements.md]
 ├─ Cargo.toml                  Rust workspace
 ├─ crates/
 │  ├─ hostlane-protocol/       Wire types: JSON-RPC frames, error codes, method params and results
-│  ├─ hostlane-core/           Daemon: socket server, SSH pool, exec, files (SFTP), audit (SQLite), client
+│  ├─ hostlane-core/           Daemon: socket server, SSH pool, exec, files (SFTP), ports, audit (SQLite), client
 │  └─ hostlane-cli/            The `hostlane` binary: CLI + `daemon` subcommands
 ├─ apps/desktop/               Electron app, based on Desktop-Starter
 │  └─ src/

@@ -49,7 +49,12 @@ const methodLabels: Record<string, string> = {
   'files.patch': '修改文件',
   'files.upload': '上传文件',
   'files.download': '下载文件',
-  'files.revert': '撤销文件修改'
+  'files.revert': '撤销文件修改',
+  'ports.list': '列出端口',
+  'ports.inspect': '探测端口',
+  'ports.check': '检查端口',
+  'ports.find_free': '查找空闲端口',
+  'ports.annotate': '端口备注'
 }
 
 const errorLabels: Partial<Record<string, string>> = {
@@ -64,7 +69,8 @@ const errorLabels: Partial<Record<string, string>> = {
   FILE_NOT_FOUND: '文件不存在',
   PERMISSION_DENIED: '无权限',
   PATCH_FAILED: '补丁不匹配',
-  FILE_ERROR: '文件错误'
+  FILE_ERROR: '文件错误',
+  REMOTE_COMMAND_FAILED: '远程命令失败'
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -80,6 +86,9 @@ function summary(entry: AuditEntry): string {
   for (const value of [params.path, params.remote_path, result.path, params.change_id]) {
     if (typeof value === 'string') return value
   }
+  if (typeof params.port === 'number') return `:${params.port}`
+  if (typeof result.port_count === 'number') return `${result.port_count} 个端口`
+  if (Array.isArray(result.ports)) return result.ports.join(' ')
   return ''
 }
 

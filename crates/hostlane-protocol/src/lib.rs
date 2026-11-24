@@ -11,6 +11,7 @@ mod events;
 mod exec;
 mod files;
 mod hosts;
+mod ports;
 mod rpc;
 mod status;
 
@@ -30,6 +31,11 @@ pub use files::{
 pub use hosts::{
     Connection, ConnectionState, ConnectionsList, Host, HostEnv, HostKeyInfo, HostParams,
     HostSource, HostsList, TrustParams, TrustResult,
+};
+pub use ports::{
+    BindScope, FindFreeParams, FreePorts, HttpProbe, ListeningPort, PortAnnotateParams,
+    PortAnnotated, PortCheck, PortNote, PortParams, PortsList, PortsListParams, ProcessInfo,
+    ServiceInfo, ServiceKind, TlsInfo,
 };
 pub use rpc::{ClientInfo, Notification, Request, Response};
 pub use status::DaemonStatus;
@@ -58,6 +64,11 @@ pub mod method {
     pub const FILES_DOWNLOAD: &str = "files.download";
     pub const FILES_CHANGE: &str = "files.change";
     pub const FILES_REVERT: &str = "files.revert";
+    pub const PORTS_LIST: &str = "ports.list";
+    pub const PORTS_INSPECT: &str = "ports.inspect";
+    pub const PORTS_CHECK: &str = "ports.check";
+    pub const PORTS_FIND_FREE: &str = "ports.find_free";
+    pub const PORTS_ANNOTATE: &str = "ports.annotate";
     pub const AUDIT_LIST: &str = "audit.list";
     /// Keeps the connection open and streams `event` notifications.
     pub const EVENTS_SUBSCRIBE: &str = "events.subscribe";
@@ -86,6 +97,11 @@ pub mod method {
         FILES_DOWNLOAD,
         FILES_CHANGE,
         FILES_REVERT,
+        PORTS_LIST,
+        PORTS_INSPECT,
+        PORTS_CHECK,
+        PORTS_FIND_FREE,
+        PORTS_ANNOTATE,
         AUDIT_LIST,
         EVENTS_SUBSCRIBE,
     ];

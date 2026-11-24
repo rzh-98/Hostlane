@@ -24,6 +24,11 @@ export const RENDERER_METHODS = [
   'output.read',
   'files.change',
   'files.revert',
+  'ports.list',
+  'ports.inspect',
+  'ports.check',
+  'ports.find_free',
+  'ports.annotate',
   'audit.list'
 ] as const
 export type RendererMethod = (typeof RENDERER_METHODS)[number]

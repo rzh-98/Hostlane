@@ -35,6 +35,9 @@ pub enum ErrorKind {
     PatchFailed,
     /// Another SFTP failure; `message` carries the server's reason.
     FileError,
+    /// A command Hostlane runs on the server for itself (e.g. listing sockets) failed;
+    /// `message` carries its output.
+    RemoteCommandFailed,
 }
 
 impl ErrorKind {
@@ -61,6 +64,7 @@ impl ErrorKind {
             Self::PermissionDenied => -32012,
             Self::PatchFailed => -32013,
             Self::FileError => -32014,
+            Self::RemoteCommandFailed => -32015,
         }
     }
 }

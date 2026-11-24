@@ -14,6 +14,9 @@ const cliCommands: [command: string, description: string][] = [
   ],
   ['hostlane --json search <host> <pattern> [path]', '用 rg（没有时用 grep）搜索文件内容'],
   ['hostlane revert <change_id>', '撤销一次文件修改'],
+  ['hostlane --json ports <host>', '列出监听端口、进程、服务和 HTTP 状态'],
+  ['hostlane --json port-check <host> <port>', '检查端口是否被占用，占用时给出建议端口'],
+  ['hostlane --json free-port <host> [--from N --to N]', '查找空闲端口（有备注的端口视为已预留）'],
   ['hostlane trust <host>', '核对并信任主机指纹（需要人确认）'],
   ['hostlane watch', '在终端里实时查看所有命令和输出'],
   ["hostlane --json call <method> '<params>'", '直接调用任意 JSON-RPC 方法'],
@@ -28,6 +31,8 @@ const agentsSnippet = `## 远程服务器
 - 用 Hostlane 改文件，不要用 sed 或 heredoc：\`hostlane --json read <host> <path>\` 会返回 sha256，把它作为 \`--expect\` 传给 \`edit --old … --new …\`、\`patch\`（stdin 传 unified diff）或 \`write\`（stdin 传内容）。遇到 FILE_CHANGED 时重新读取文件再修改。
 - 搜索用 \`hostlane --json search <host> <pattern> [path]\`，列目录用 \`hostlane --json ls <host> [path]\`。
 - 每次修改都会返回 change_id，用 \`hostlane revert <change_id>\` 撤销。
+- 部署服务前用 \`hostlane --json free-port <host>\` 或 \`port-check <host> <port>\` 选端口，不要猜；\`hostlane --json ports <host>\` 列出端口对应的进程、容器和 HTTP 状态，\`port <host> <port>\` 查看单个端口。
+- 用 \`hostlane port-note <host> <port> --name … --project …\` 记录新部署服务占用的端口。
 - 命令都加 \`--json\`；失败时读取 error.kind 和 error.hint 决定下一步。
 - 遇到 HOST_KEY_UNKNOWN 或 HOST_KEY_CHANGED 时停下来告诉用户，不要自行信任主机密钥。
 - 设置 \`HOSTLANE_CLIENT=<agent 名称>\` 和 \`HOSTLANE_SESSION=<会话 ID>\`，审计和会话页会按它们区分来源。`

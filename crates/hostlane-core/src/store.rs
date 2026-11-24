@@ -1,18 +1,20 @@
 //! SQLite storage: the append-only audit log (`calls`), command records for the
-//! session monitor (`execs`) and file changes with their diffs (`file_changes`).
+//! session monitor (`execs`), file changes with their diffs (`file_changes`) and the
+//! user's notes on ports (`port_notes`).
 //! The database lives at `<data dir>/hostlane.db`.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use hostlane_protocol::{
     AuditEntry, AuditList, AuditListParams, AuditOutcome, ClientInfo, ErrorKind, ExecListParams,
-    ExecRecord, ExecStatus, FileChange, FileOperation, RpcError,
+    ExecRecord, ExecStatus, FileChange, FileOperation, PortNote, RpcError,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value as Sql};
 use serde_json::{Value, json};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS calls (
@@ -76,6 +78,16 @@ CREATE TABLE IF NOT EXISTS file_changes (
     has_backup INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS file_changes_host ON file_changes (host, path, created_at);
+
+CREATE TABLE IF NOT EXISTS port_notes (
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL,
+    name TEXT,
+    project TEXT,
+    note TEXT,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (host, port)
+);
 ";
 
 /// A call to append to the audit log.
@@ -332,6 +344,61 @@ impl Store {
         .await
     }
 
+    /// Notes on `host`'s ports, by port.
+    pub async fn port_notes(&self, host: String) -> Result<BTreeMap<u16, PortNote>, RpcError> {
+        self.with(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT port, name, project, note, updated_at FROM port_notes WHERE host = ?1",
+            )?;
+            stmt.query_map([host], |row| {
+                Ok((
+                    row.get::<_, u16>("port")?,
+                    PortNote {
+                        name: row.get("name")?,
+                        project: row.get("project")?,
+                        note: row.get("note")?,
+                        updated_at: row.get::<_, i64>("updated_at")? as u64,
+                    },
+                ))
+            })?
+            .collect()
+        })
+        .await
+    }
+
+    /// Stores a note, or removes it when `note` is `None`.
+    pub async fn set_port_note(
+        &self,
+        host: String,
+        port: u16,
+        note: Option<PortNote>,
+    ) -> Result<(), RpcError> {
+        self.with(move |conn| {
+            match note {
+                Some(note) => conn.execute(
+                    "INSERT INTO port_notes (host, port, name, project, note, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                     ON CONFLICT (host, port) DO UPDATE SET name = ?3, project = ?4, note = ?5,
+                     updated_at = ?6",
+                    params![
+                        host,
+                        port,
+                        note.name,
+                        note.project,
+                        note.note,
+                        note.updated_at as i64
+                    ],
+                )?,
+                None => conn.execute(
+                    "DELETE FROM port_notes WHERE host = ?1 AND port = ?2",
+                    params![host, port],
+                )?,
+            };
+            Ok(())
+        })
+        .await
+    }
+
     /// Marks commands left running by a previous daemon as interrupted and audits them.
     pub async fn recover_interrupted(&self, now: u64) -> Result<usize, RpcError> {
         self.with(move |conn| {
@@ -562,5 +629,34 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn port_notes_upsert_and_delete() {
+        let store = Store::open_in_memory().unwrap();
+        let note = |name: &str, at: u64| PortNote {
+            name: Some(name.into()),
+            project: Some("shop".into()),
+            note: None,
+            updated_at: at,
+        };
+        store
+            .set_port_note("web".into(), 8080, Some(note("api", 1)))
+            .await
+            .unwrap();
+        store
+            .set_port_note("web".into(), 8080, Some(note("api-v2", 2)))
+            .await
+            .unwrap();
+        store
+            .set_port_note("db".into(), 5432, Some(note("pg", 3)))
+            .await
+            .unwrap();
+        let notes = store.port_notes("web".into()).await.unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[&8080].name.as_deref(), Some("api-v2"));
+        assert_eq!(notes[&8080].updated_at, 2);
+        store.set_port_note("web".into(), 8080, None).await.unwrap();
+        assert!(store.port_notes("web".into()).await.unwrap().is_empty());
     }
 }

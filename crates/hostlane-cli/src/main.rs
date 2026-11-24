@@ -18,6 +18,7 @@ use hostlane_protocol::{
 use serde_json::{Value, json};
 
 mod files;
+mod ports;
 
 /// Lets your own agent operate remote servers over SSH, safely, from this machine.
 #[derive(Parser)]
@@ -81,6 +82,8 @@ enum Command {
     },
     #[command(flatten)]
     Files(files::FileCommand),
+    #[command(flatten)]
+    Ports(ports::PortCommand),
     /// Open the pooled connection to a host and show its host key.
     Connect { host: String },
     /// Trust a host's key after you have verified its fingerprint.
@@ -213,6 +216,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             limit,
         } => output(&client, output_id, stream.into(), offset, limit, json).await?,
         Command::Files(command) => files::run(&client, command, json).await?,
+        Command::Ports(command) => ports::run(&client, command, json).await?,
         Command::Connect { host } => connect(&client, &host, json).await?,
         Command::Trust { host, fingerprint } => trust(&client, &host, fingerprint, json).await?,
         Command::Disconnect { host } => {
@@ -645,11 +649,14 @@ async fn audit(
                     .map(|k| kind_name(k).to_lowercase())
                     .unwrap_or_else(|| "error".into()),
             };
-            let detail = e
-                .params
-                .get("command")
-                .and_then(Value::as_str)
-                .map(|c| one_line(c, 60))
+            let detail = ["command", "path"]
+                .iter()
+                .find_map(|key| e.params.get(*key).and_then(Value::as_str))
+                .map(|text| one_line(text, 60))
+                .or_else(|| {
+                    let port = e.params.get("port").and_then(Value::as_u64)?;
+                    Some(format!("port {port}"))
+                })
                 .unwrap_or_default();
             [
                 ago(e.started_at),
