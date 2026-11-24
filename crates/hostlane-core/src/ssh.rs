@@ -311,7 +311,12 @@ fn identity_files(entry: &Entry, ssh_dir: &Path) -> Vec<PathBuf> {
 }
 
 #[cfg(unix)]
-async fn connect_agent(entry: &Entry) -> Option<AgentClient<tokio::net::UnixStream>> {
+type AgentStream = tokio::net::UnixStream;
+#[cfg(not(unix))]
+type AgentStream = tokio::io::DuplexStream;
+
+#[cfg(unix)]
+async fn connect_agent(entry: &Entry) -> Option<AgentClient<AgentStream>> {
     let socket = match entry.options.identity_agent.as_deref() {
         Some(value) if value.eq_ignore_ascii_case("none") => return None,
         Some(value) if value != "SSH_AUTH_SOCK" => {
@@ -327,7 +332,7 @@ async fn connect_agent(entry: &Entry) -> Option<AgentClient<tokio::net::UnixStre
 }
 
 #[cfg(not(unix))]
-async fn connect_agent(_entry: &Entry) -> Option<AgentClient<tokio::net::UnixStream>> {
+async fn connect_agent(_entry: &Entry) -> Option<AgentClient<AgentStream>> {
     None
 }
 

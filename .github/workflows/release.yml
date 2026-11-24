@@ -1,0 +1,113 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (arm64)
+            os: macos-latest
+            dist: dist:mac
+            target: aarch64-apple-darwin
+          - name: Linux (x64)
+            os: ubuntu-latest
+            dist: dist:linux
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: false
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Build CLI, typecheck and package
+        run: npm run ${{ matrix.dist }} -- --publish never
+
+      - name: Smoke test (launch packaged app)
+        if: runner.os == 'macOS'
+        run: node scripts/smoke.mjs screenshot-${{ runner.os }}.png
+
+      - name: Smoke test (launch packaged app)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          xvfb-run --auto-servernum node scripts/smoke.mjs screenshot-${{ runner.os }}.png
+
+      - name: Archive the CLI
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          name="hostlane-${version}-${{ matrix.target }}"
+          mkdir -p "cli/${name}"
+          cp ../../target/release/hostlane ../../LICENSE ../../README.md "cli/${name}/"
+          tar -C cli -czf "cli/${name}.tar.gz" "${name}"
+          cd cli && shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256"
+
+      - name: Upload installers and CLI
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            apps/desktop/release/*/*.dmg
+            apps/desktop/release/*/*.zip
+            apps/desktop/release/*/*.AppImage
+            apps/desktop/cli/*.tar.gz
+            apps/desktop/cli/*.sha256
+
+      - name: Upload screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: screenshot-${{ matrix.target }}
+          if-no-files-found: ignore
+          path: apps/desktop/screenshot-${{ runner.os }}.png
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: dist/**/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

@@ -17,6 +17,7 @@
     "dist:win": "npm run build && electron-builder --win",
     "dist:linux": "npm run build:cli && npm run build && electron-builder --linux",
     "postinstall": "electron-builder install-app-deps",
+    "icon": "electron scripts/render-icon.cjs",
     "format": "prettier --write ."
   },
   "devDependencies": {

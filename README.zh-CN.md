@@ -1,9 +1,11 @@
 <div align="center">
+  <img alt="Hostlane" src="docs/icon.png" width="112" />
   <h1>Hostlane</h1>
   <p><a href="README.md">English</a> · <b>简体中文</b></p>
   <p>给你自己的 agent 用的 SSH 运行时。让 Codex、Claude Code 或自研 agent 在本机操作远程服务器：执行命令、修改文件、端口映射和管理 web 服务端口，并带有指纹校验、审批和审计。</p>
   <p>不内置 LLM；服务器端不需要安装任何组件，只要有 <code>sshd</code>。</p>
   <p>
+    <a href="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml/badge.svg" /></a>
     <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M6)-orange" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
@@ -46,7 +48,7 @@ agent 已经很擅长运维服务器，但周边工具跟不上：Chaterm、Warp
 - **默认安全**：首次连接时记录主机指纹，变化时拒绝连接；命令按风险分级，高风险操作等你审批；每次调用都写入本地只追加的审计日志；一键急停可以暂停所有 agent 操作。
 - **可靠的文件修改**：打补丁前先校验哈希、备份原文件，再上传临时文件并原子替换，保留权限和属主。
 - **面向 web 服务**：查看每台服务器监听了哪些端口、属于哪个进程、systemd 单元或 Docker 容器、能否响应 HTTP，并一键转发到本机。
-- **一个守护进程，多个客户端**：常驻的 Rust 守护进程持有 SSH 连接、隧道和审批队列，CLI、MCP 和桌面端共用它；桌面端随时可以关闭。
+- **一个守护进程，多个客户端**：常驻的 Rust 守护进程（空闲约 9 MB；50 台主机加 100 条隧道约 21 MB，见[性能实测](docs/architecture.md#性能实测)）持有 SSH 连接、隧道和审批队列，CLI、MCP 和桌面端共用它；桌面端随时可以关闭。
 - **只看不输**：会话监视器是只读终端，实时或回放显示每条命令的输出、退出码和耗时。
 
 ## 工作方式
@@ -243,17 +245,24 @@ claude mcp add --scope user hostlane -- hostlane mcp
 
 ## 路线图
 
-| 阶段              | 内容                                                                                      | 状态      |
-| ----------------- | ----------------------------------------------------------------------------------------- | --------- |
-| **M0** 骨架       | Rust workspace、守护进程、本地 socket JSON-RPC、CLI、读取 `~/.ssh/config`、桌面端页面框架 | ✅ 已完成 |
-| **M1** 连接与执行 | `russh` 连接池、主机指纹校验、`exec`、会话监视器、审计日志                                | ✅ 已完成 |
-| **M2** 文件       | `read_file`、`list_dir`、`search`、`apply_patch`、`write_file`                            | ✅ 已完成 |
-| **M3** 端口       | 端口发现、进程关联、HTTP 探测、端口备注、空闲端口查找                                     | ✅ 已完成 |
-| **M4** 隧道       | 本地转发、配置持久化、自动重连、冲突检测、agent 临时隧道                                  | ✅ 已完成 |
-| **M5** 策略       | 风险分级、规则配置、阻塞式审批、急停                                                      | ✅ 已完成 |
-| **M6** MCP 与分发 | `hostlane mcp`、接入页、用户级服务注册、打包内置二进制                                    | ✅ 已完成 |
+| 阶段                | 内容                                                                                                                                       | 状态      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
+| **M0** 骨架         | Rust workspace、守护进程、本地 socket JSON-RPC、CLI、读取 `~/.ssh/config`、桌面端页面框架                                                  | ✅ 已完成 |
+| **M1** 连接与执行   | `russh` 连接池、主机指纹校验、`exec`、会话监视器、审计日志                                                                                 | ✅ 已完成 |
+| **M2** 文件         | `read_file`、`list_dir`、`search`、`apply_patch`、`write_file`                                                                             | ✅ 已完成 |
+| **M3** 端口         | 端口发现、进程关联、HTTP 探测、端口备注、空闲端口查找                                                                                      | ✅ 已完成 |
+| **M4** 隧道         | 本地转发、配置持久化、自动重连、冲突检测、agent 临时隧道                                                                                   | ✅ 已完成 |
+| **M5** 策略         | 风险分级、规则配置、阻塞式审批、急停                                                                                                       | ✅ 已完成 |
+| **M6** MCP 与分发   | `hostlane mcp`、接入页、用户级服务注册、打包内置二进制                                                                                     | ✅ 已完成 |
+| **M7** 工程化       | GitHub Actions（CI 检查、Linux 和 macOS 上对本机 sshd 的端到端测试、Windows 编译检查、打 tag 发布安装包和 CLI 压缩包）、性能实测、应用图标 | ✅ 已完成 |
+| **M8** 补齐 P0      | 手动添加主机（H1）；密码和带口令私钥，保存在系统钥匙串（H2）；服务快捷操作：日志、重启、停止、结束进程（P7）；更新截图                     | 🚧 进行中 |
+| **M9** 长任务与接入 | 基于 `tmux` / `nohup` 的后台任务（E2）、按 agent 区分的客户端名称和令牌（A5）、不可信数据标记（S6）                                        | 计划中    |
+| **M10** web 运维    | 暴露面分析（P5）、Nginx/Caddy 域名映射（P6）、健康检查（P9）、远程转发（T2）、主机画像（H6）、主机备注导出（H7）                           | 计划中    |
+| **M11** 审计与回滚  | 按任务回滚（F5）、时间线（L3）、导出（L4）、会话回放（M3）                                                                                 | 计划中    |
+| **M12** Windows     | 命名管道和 ACL、Windows OpenSSH agent、任务计划程序开机启动、后台启动、PATH 设置                                                           | 计划中    |
+| **V1.0** 发布       | 代码签名和公证、自动更新、Homebrew                                                                                                         | 计划中    |
 
-完整需求（含编号和优先级）见 [docs/requirements.md](docs/requirements.md)。
+M9 和 M10 的先后按实际使用中最常用的场景决定。完整需求（含编号和优先级）见 [docs/requirements.md](docs/requirements.md)。
 
 ## 项目结构
 
@@ -285,8 +294,14 @@ cargo test --workspace
 # 桌面端（在 apps/desktop 下）
 npm run typecheck
 npx prettier --write src
+
+# 端到端测试：在 127.0.0.1 上起临时 sshd（不影响 ~/.ssh 和真实守护进程）
+python3 scripts/e2e.py
+# 性能实测（release 版）
+cargo build --release -p hostlane-cli && python3 scripts/bench.py
 ```
 
+- CI（`.github/workflows/ci.yml`）运行上述检查、Linux 和 macOS 上的端到端测试，以及 Windows 编译检查。推送 `v*` tag 会构建未签名的安装包和 CLI 压缩包，并发布 GitHub Release。见[测试与 CI](docs/architecture.md#测试与-ci)。
 - 新增一个 JSON-RPC 方法需要五步，见[新增一个方法](docs/architecture.md#新增一个方法)。
 - 桌面端 UI 遵循[设计系统](apps/desktop/docs/design-system.zh-CN.md)；`ui/` 和 `layout/` 中不放业务代码。
 - socket 路径规则同时存在于 `crates/hostlane-core/src/paths.rs` 和 `apps/desktop/src/main/paths.ts`，修改时两边保持一致。

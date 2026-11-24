@@ -1,9 +1,11 @@
 <div align="center">
+  <img alt="Hostlane" src="docs/icon.png" width="112" />
   <h1>Hostlane</h1>
   <p><b>English</b> · <a href="README.zh-CN.md">简体中文</a></p>
   <p>An SSH runtime for the agent you already use. Let Codex, Claude Code or your own agent run commands, edit files, open tunnels and manage web-service ports on remote servers — from your machine, with fingerprint checks, approvals and an audit trail.</p>
   <p>No built-in LLM. Nothing to install on the server: <code>sshd</code> is enough.</p>
   <p>
+    <a href="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml/badge.svg" /></a>
     <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M6)-orange" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
@@ -46,7 +48,7 @@ Agents are good at operating servers, but the tools around them fall short. Term
 - **Safe by design.** Host fingerprints are checked and pinned, commands are classified by risk, risky operations wait for your approval, and every call lands in a local append-only audit log. A global stop switch pauses all agent activity.
 - **Edits you can trust.** File patches check a hash first, back up the original, upload to a temp file and swap atomically, keeping permissions and ownership.
 - **Built for web services.** See which ports listen on each server, which process, systemd unit or Docker container owns them, whether they answer HTTP, and forward them to your machine in one click.
-- **One daemon, many clients.** A small resident Rust daemon owns the SSH connections, tunnels and approval queue. The CLI, MCP server and desktop app all share it, and the desktop app can be closed at any time.
+- **One daemon, many clients.** A small resident Rust daemon (about 9 MB idle; 50 hosts and 100 tunnels in about 21 MB, see [measurements](docs/architecture.md#性能实测)) owns the SSH connections, tunnels and approval queue. The CLI, MCP server and desktop app all share it, and the desktop app can be closed at any time.
 - **Watch, don't type.** The session monitor is a read-only terminal: you see every command, its output, exit code and duration, live or replayed.
 
 ## How it works
@@ -243,17 +245,24 @@ The desktop app's Integrations page has the same snippet with a copy button.
 
 ## Roadmap
 
-| Milestone                 | Scope                                                                                        | Status  |
-| ------------------------- | -------------------------------------------------------------------------------------------- | ------- |
-| **M0** Skeleton           | Rust workspace, daemon, local socket JSON-RPC, CLI, `~/.ssh/config` import, desktop shell    | ✅ Done |
-| **M1** Connect & exec     | `russh` connection pool, host fingerprint checks, `exec`, session monitor, audit log         | ✅ Done |
-| **M2** Files              | `read_file`, `list_dir`, `search`, `apply_patch`, `write_file`                               | ✅ Done |
-| **M3** Ports              | Port discovery, process mapping, HTTP probing, port notes, free-port lookup                  | ✅ Done |
-| **M4** Tunnels            | Local forwarding, saved tunnels, auto-reconnect, conflict detection, temporary agent tunnels | ✅ Done |
-| **M5** Policy             | Risk levels, rules, blocking approvals, global stop                                          | ✅ Done |
-| **M6** MCP & distribution | `hostlane mcp`, Integrations page, user-level service registration, bundled binary           | ✅ Done |
+| Milestone                  | Scope                                                                                                                                                                                  | Status         |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| **M0** Skeleton            | Rust workspace, daemon, local socket JSON-RPC, CLI, `~/.ssh/config` import, desktop shell                                                                                              | ✅ Done        |
+| **M1** Connect & exec      | `russh` connection pool, host fingerprint checks, `exec`, session monitor, audit log                                                                                                   | ✅ Done        |
+| **M2** Files               | `read_file`, `list_dir`, `search`, `apply_patch`, `write_file`                                                                                                                         | ✅ Done        |
+| **M3** Ports               | Port discovery, process mapping, HTTP probing, port notes, free-port lookup                                                                                                            | ✅ Done        |
+| **M4** Tunnels             | Local forwarding, saved tunnels, auto-reconnect, conflict detection, temporary agent tunnels                                                                                           | ✅ Done        |
+| **M5** Policy              | Risk levels, rules, blocking approvals, global stop                                                                                                                                    | ✅ Done        |
+| **M6** MCP & distribution  | `hostlane mcp`, Integrations page, user-level service registration, bundled binary                                                                                                     | ✅ Done        |
+| **M7** Engineering         | GitHub Actions (checks, end-to-end tests against a local sshd on Linux and macOS, Windows build check, tagged releases of installers and CLI archives), measured performance, app icon | ✅ Done        |
+| **M8** Finish P0           | Add hosts by hand (H1); passwords and passphrase-protected keys stored in the system keychain (H2); service actions: logs, restart, stop, kill (P7); fresh screenshots                 | 🚧 In progress |
+| **M9** Long jobs & clients | Background jobs on `tmux` / `nohup` (E2), per-agent client names and tokens (A5), untrusted-data marking (S6)                                                                          | Planned        |
+| **M10** Web ops            | Exposure analysis (P5), Nginx/Caddy domain mapping (P6), health checks (P9), remote forwarding (T2), host profile (H6), host notes export (H7)                                         | Planned        |
+| **M11** Audit & rollback   | Per-task rollback (F5), timeline (L3), export (L4), session replay (M3)                                                                                                                | Planned        |
+| **M12** Windows            | Named pipe with ACL, Windows OpenSSH agent, Task Scheduler autostart, background launch, PATH setup                                                                                    | Planned        |
+| **V1.0** Release           | Code signing and notarization, auto-update, Homebrew                                                                                                                                   | Planned        |
 
-The full requirement list, with IDs and priorities, is in [docs/requirements.md](docs/requirements.md) (Chinese).
+The order of M9 and M10 depends on which scenarios come up most in real use. The full requirement list, with IDs and priorities, is in [docs/requirements.md](docs/requirements.md) (Chinese).
 
 ## Project structure
 
@@ -285,8 +294,14 @@ cargo test --workspace
 # Desktop (in apps/desktop)
 npm run typecheck
 npx prettier --write src
+
+# End-to-end test against a throwaway sshd on 127.0.0.1 (does not touch ~/.ssh or the real daemon)
+python3 scripts/e2e.py
+# Performance measurements (release build)
+cargo build --release -p hostlane-cli && python3 scripts/bench.py
 ```
 
+- CI (`.github/workflows/ci.yml`) runs the checks, the end-to-end test on Linux and macOS, and a Windows build check. Pushing a `v*` tag builds unsigned installers and CLI archives and publishes a GitHub Release. See [Testing and CI](docs/architecture.md#测试与-ci).
 - Adding a JSON-RPC method takes five steps; see [Adding a method](docs/architecture.md#新增一个方法).
 - The desktop UI follows the [design system](apps/desktop/docs/design-system.md). `ui/` and `layout/` contain no product code.
 - The socket path rules live in both `crates/hostlane-core/src/paths.rs` and `apps/desktop/src/main/paths.ts`. Keep them in sync.

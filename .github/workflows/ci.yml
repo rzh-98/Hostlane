@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+          - name: macOS
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Generated TS protocol types are committed
+        run: |
+          git status --porcelain apps/desktop/src/shared/protocol
+          test -z "$(git status --porcelain apps/desktop/src/shared/protocol)"
+
+      - name: Install sshd
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends openssh-server
+
+      - name: End-to-end test against a local sshd
+        run: |
+          cargo build -p hostlane-cli
+          python3 scripts/e2e.py target/debug/hostlane
+
+      - name: Performance measurements
+        if: runner.os == 'Linux'
+        run: |
+          cargo build --release -p hostlane-cli
+          python3 scripts/bench.py target/release/hostlane | tee -a "$GITHUB_STEP_SUMMARY"
+
+  desktop:
+    name: Desktop
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Check formatting
+        run: npx prettier --check src scripts ../../README.md ../../README.zh-CN.md ../../docs/architecture.md
+
+      - name: Build renderer and main
+        run: npx electron-vite build
+
+  windows:
+    # Windows is not supported yet (milestone M12); this only tracks whether it compiles.
+    name: Windows (build check)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check
+        run: cargo check --workspace --all-targets

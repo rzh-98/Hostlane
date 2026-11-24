@@ -39,6 +39,11 @@ Hostlane/
 │     ├─ shared/ipc.ts           IPC 通道、渲染进程可调用的方法白名单
 │     ├─ shared/protocol/        由 ts-rs 生成，不要手改
 │     └─ renderer/src/app/       守护进程状态、事件、连接状态等跨页面的 store
+├─ scripts/
+│  ├─ testbed.py                在 127.0.0.1 上起一个临时 sshd，并把 HOSTLANE_* 指向临时目录
+│  ├─ e2e.py                    用 CLI 和 MCP 跑一遍完整流程（CI 中运行）
+│  └─ bench.py                  性能实测
+├─ .github/workflows/            ci.yml（检查、端到端测试、Windows 编译检查）、release.yml（打 tag 发布）
 └─ docs/
 ```
 
@@ -304,3 +309,31 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 - **结果**：成功时返回 `structuredContent`（守护进程的原始结果），`content` 是同一份 JSON 文本。失败时返回 `isError: true` 的工具结果，内容为 `{"error":{"kind","message","hint","details"}}`，和 CLI 的 `--json` 错误格式相同；未知工具名返回协议错误 `-32602`。
 - **审批**：默认阻塞等待（与 CLI 非交互模式相同）；`async: true` 时立即返回 `APPROVAL_REQUIRED` 和 `details.ticket_id`。MCP 客户端可能有自己的工具超时（例如 Codex 的 `tool_timeout_sec`），接入页的配置片段把它设为 600 秒。
 - **守护进程**：启动时和遇到 `DAEMON_NOT_RUNNING` 时会调用与 `hostlane daemon start` 相同的逻辑拉起守护进程（服务已安装时交给服务管理器），然后重试一次。stdout 只用于 MCP 协议，不输出日志。
+
+## 测试与 CI
+
+- `cargo test --workspace`：单元测试，同时重新生成 `apps/desktop/src/shared/protocol/`。
+- `python3 scripts/e2e.py [hostlane]`：在 127.0.0.1 上以当前用户起一个临时 sshd（端口 `$E2E_PORT`，默认 2222；自己的主机密钥、用户密钥和 `sshd_config`），`HOSTLANE_SOCKET`、`HOSTLANE_DATA_DIR`、`HOSTLANE_SSH_CONFIG` 都指向临时目录，然后用 CLI 和 MCP 跑完整流程：指纹校验、exec、输出截断、文件读写和撤销、端口发现和 HTTP 探测、隧道、审批和 ticket、急停、审计。`E2E_KEEP=1` 保留临时目录。
+- `apps/desktop/scripts/smoke.mjs`：启动打包后的桌面端（独立的数据目录和 `--user-data-dir`），检查页面挂载、主机页显示 `ssh_config` 中的主机、内置的守护进程已启动，并截图。
+- `.github/workflows/ci.yml`（push 到 main 和 PR）：
+  - Linux 和 macOS：`cargo fmt --check`、`cargo clippy -D warnings`、`cargo test`、检查生成的 TS 类型已提交、`e2e.py`；Linux 上再跑 `bench.py`，结果写到 job summary。
+  - 桌面端：`npm ci`、`typecheck`、`prettier --check`、`electron-vite build`。
+  - Windows：只跑 `cargo check`，允许失败，用来跟踪 M12 的进度。
+- `.github/workflows/release.yml`（推送 `v*` tag）：在 macOS（arm64）和 Linux（x64）上打安装包（dmg、zip、AppImage）并跑冒烟测试，另外打包 CLI（`hostlane-<版本>-<target>.tar.gz` 和 `.sha256`），发布到 GitHub Release；tag 带 `-` 时标为预发布。安装包没有签名，macOS 上需要 `xattr -cr Hostlane.app`。
+
+## 性能实测
+
+`python3 scripts/bench.py [hostlane]`（默认 `target/release/hostlane`）使用同一个临时 sshd，服务器就是本机，所以结果反映的是 Hostlane 自身的开销，不含网络延迟。2026-11-25 在 Apple M 系列（10 核）、macOS 上的结果：
+
+| 指标                                              | 结果                        | 目标（需求 §6） |
+| ------------------------------------------------- | --------------------------- | --------------- |
+| 守护进程空闲内存（RSS）                           | 8.9 MB                      | < 30 MB         |
+| `exec.run true`（socket，连接已建立）             | 中位数 4.1 ms，p95 5.6 ms   |                 |
+| 其中 SSH channel 上的耗时（`duration_ms`）        | 中位数 4 ms                 |                 |
+| OpenSSH `ssh test true`，复用连接（基线）         | 中位数 9.0 ms，p95 10.3 ms  |                 |
+| `hostlane exec test -- true`（每次新起 CLI 进程） | 中位数 7.9 ms，p95 9.3 ms   |                 |
+| 相对复用连接的 OpenSSH 的额外开销                 | socket −4.9 ms，CLI −1.1 ms | < 50 ms         |
+| 50 台主机同时连接                                 | 0.3 s 全部连上，RSS 19.4 MB | 50 台           |
+| 100 条隧道                                        | 全部 active，RSS 20.7 MB    | 100 条          |
+| 隧道吞吐（单个连接）                              | 491 MB/s                    |                 |
+| 跑完后的内存（RSS）                               | 21.4 MB                     |                 |
