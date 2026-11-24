@@ -38,6 +38,11 @@ pub enum ErrorKind {
     /// A command Hostlane runs on the server for itself (e.g. listing sockets) failed;
     /// `message` carries its output.
     RemoteCommandFailed,
+    /// The local port of a tunnel is taken; `details` has `port` and `suggested_port`.
+    PortInUse,
+    TunnelNotFound,
+    /// The SSH server refuses TCP forwarding (`AllowTcpForwarding no`).
+    ForwardingDenied,
 }
 
 impl ErrorKind {
@@ -65,6 +70,9 @@ impl ErrorKind {
             Self::PatchFailed => -32013,
             Self::FileError => -32014,
             Self::RemoteCommandFailed => -32015,
+            Self::PortInUse => -32016,
+            Self::TunnelNotFound => -32017,
+            Self::ForwardingDenied => -32018,
         }
     }
 }

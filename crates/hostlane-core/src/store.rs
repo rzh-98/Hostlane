@@ -1,6 +1,6 @@
 //! SQLite storage: the append-only audit log (`calls`), command records for the
 //! session monitor (`execs`), file changes with their diffs (`file_changes`) and the
-//! user's notes on ports (`port_notes`).
+//! user's notes on ports (`port_notes`) and saved tunnels (`tunnels`).
 //! The database lives at `<data dir>/hostlane.db`.
 
 use std::collections::BTreeMap;
@@ -14,7 +14,9 @@ use hostlane_protocol::{
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value as Sql};
 use serde_json::{Value, json};
 
-const SCHEMA_VERSION: i64 = 3;
+use crate::tunnels::TunnelConfig;
+
+const SCHEMA_VERSION: i64 = 4;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS calls (
@@ -87,6 +89,20 @@ CREATE TABLE IF NOT EXISTS port_notes (
     note TEXT,
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (host, port)
+);
+
+CREATE TABLE IF NOT EXISTS tunnels (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    host TEXT NOT NULL,
+    bind TEXT NOT NULL,
+    local_port INTEGER NOT NULL,
+    remote_host TEXT NOT NULL,
+    remote_port INTEGER NOT NULL,
+    auto_start INTEGER NOT NULL,
+    client TEXT NOT NULL,
+    session TEXT,
+    created_at INTEGER NOT NULL
 );
 ";
 
@@ -399,6 +415,65 @@ impl Store {
         .await
     }
 
+    /// Saved tunnels, oldest first.
+    pub async fn tunnels(&self) -> Result<Vec<TunnelConfig>, RpcError> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare("SELECT * FROM tunnels ORDER BY created_at, id")?;
+            stmt.query_map([], |row| {
+                Ok(TunnelConfig {
+                    id: row.get("id")?,
+                    name: row.get("name")?,
+                    host: row.get("host")?,
+                    bind: row.get("bind")?,
+                    local_port: row.get("local_port")?,
+                    remote_host: row.get("remote_host")?,
+                    remote_port: row.get("remote_port")?,
+                    auto_start: row.get("auto_start")?,
+                    created_by: ClientInfo {
+                        name: row.get("client")?,
+                        session: row.get("session")?,
+                    },
+                    created_at: row.get::<_, i64>("created_at")? as u64,
+                })
+            })?
+            .collect()
+        })
+        .await
+    }
+
+    pub async fn save_tunnel(&self, tunnel: TunnelConfig) -> Result<(), RpcError> {
+        self.with(move |conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO tunnels (id, name, host, bind, local_port, remote_host,
+                 remote_port, auto_start, client, session, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    tunnel.id,
+                    tunnel.name,
+                    tunnel.host,
+                    tunnel.bind,
+                    tunnel.local_port,
+                    tunnel.remote_host,
+                    tunnel.remote_port,
+                    tunnel.auto_start,
+                    tunnel.created_by.name,
+                    tunnel.created_by.session,
+                    tunnel.created_at as i64
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn delete_tunnel(&self, id: String) -> Result<(), RpcError> {
+        self.with(move |conn| {
+            conn.execute("DELETE FROM tunnels WHERE id = ?1", [id])?;
+            Ok(())
+        })
+        .await
+    }
+
     /// Marks commands left running by a previous daemon as interrupted and audits them.
     pub async fn recover_interrupted(&self, now: u64) -> Result<usize, RpcError> {
         self.with(move |conn| {
@@ -629,6 +704,32 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn tunnels_round_trip() {
+        let store = Store::open_in_memory().unwrap();
+        let tunnel = TunnelConfig {
+            id: "tn-1".into(),
+            name: Some("web".into()),
+            host: "prod".into(),
+            bind: "127.0.0.1".into(),
+            local_port: 8080,
+            remote_host: "127.0.0.1".into(),
+            remote_port: 80,
+            auto_start: true,
+            created_by: ClientInfo::new("desktop"),
+            created_at: 5,
+        };
+        store.save_tunnel(tunnel.clone()).await.unwrap();
+        let updated = TunnelConfig {
+            local_port: 8081,
+            ..tunnel.clone()
+        };
+        store.save_tunnel(updated.clone()).await.unwrap();
+        assert_eq!(store.tunnels().await.unwrap(), vec![updated]);
+        store.delete_tunnel("tn-1".into()).await.unwrap();
+        assert!(store.tunnels().await.unwrap().is_empty());
     }
 
     #[tokio::test]

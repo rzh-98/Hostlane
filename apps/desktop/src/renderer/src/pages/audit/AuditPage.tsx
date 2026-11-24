@@ -54,7 +54,12 @@ const methodLabels: Record<string, string> = {
   'ports.inspect': '探测端口',
   'ports.check': '检查端口',
   'ports.find_free': '查找空闲端口',
-  'ports.annotate': '端口备注'
+  'ports.annotate': '端口备注',
+  'tunnels.open': '建立隧道',
+  'tunnels.close': '关闭隧道',
+  'tunnels.start': '启动隧道',
+  'tunnels.update': '修改隧道',
+  'tunnels.delete': '删除隧道'
 }
 
 const errorLabels: Partial<Record<string, string>> = {
@@ -70,7 +75,10 @@ const errorLabels: Partial<Record<string, string>> = {
   PERMISSION_DENIED: '无权限',
   PATCH_FAILED: '补丁不匹配',
   FILE_ERROR: '文件错误',
-  REMOTE_COMMAND_FAILED: '远程命令失败'
+  REMOTE_COMMAND_FAILED: '远程命令失败',
+  PORT_IN_USE: '端口被占用',
+  TUNNEL_NOT_FOUND: '隧道不存在',
+  FORWARDING_DENIED: '禁止转发'
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -87,6 +95,14 @@ function summary(entry: AuditEntry): string {
     if (typeof value === 'string') return value
   }
   if (typeof params.port === 'number') return `:${params.port}`
+  const tunnel = record(result.tunnel)
+  if (typeof tunnel.url === 'string') {
+    return `${tunnel.url} → ${String(tunnel.remote_host)}:${String(tunnel.remote_port)}`
+  }
+  if (typeof params.remote_port === 'number') return `→ :${params.remote_port}`
+  if (params.reason === 'expired') return '到期自动关闭'
+  if (typeof params.id === 'string') return params.id
+  if (typeof params.session === 'string') return `会话 ${params.session}`
   if (typeof result.port_count === 'number') return `${result.port_count} 个端口`
   if (Array.isArray(result.ports)) return result.ports.join(' ')
   return ''

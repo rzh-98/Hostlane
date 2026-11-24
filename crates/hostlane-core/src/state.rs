@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -10,6 +10,7 @@ use crate::pool::Pool;
 use crate::ssh::Locations;
 use crate::ssh_config::{self, Entry, Loaded};
 use crate::store::Store;
+use crate::tunnels::Tunnels;
 use crate::util::now_ms;
 
 /// Stored command output and file backups are kept this long.
@@ -53,6 +54,7 @@ pub struct Daemon {
     pub(crate) store: Store,
     pub(crate) events: EventBus,
     pub(crate) pool: Arc<Pool>,
+    pub(crate) tunnels: Arc<Tunnels>,
     pub(crate) shutdown: Notify,
 }
 
@@ -87,6 +89,13 @@ impl Daemon {
             ssh_dir,
             hostlane_known_hosts: options.data_dir.join("known_hosts"),
         };
+        let pool = Arc::new(Pool::new(locations, events.clone()));
+        let tunnels = Arc::new(Tunnels::new(
+            pool.clone(),
+            events.clone(),
+            store.clone(),
+            options.ssh_config_path.clone(),
+        ));
         Ok(Self {
             started: Instant::now(),
             started_at: now_ms(),
@@ -96,7 +105,8 @@ impl Daemon {
             outputs_dir,
             backups_dir,
             store,
-            pool: Arc::new(Pool::new(locations, events.clone())),
+            pool,
+            tunnels,
             events,
             shutdown: Notify::new(),
         })
@@ -119,6 +129,8 @@ impl Daemon {
             crate::exec::prune_outputs(&backups, OUTPUT_RETENTION);
         });
         tokio::spawn(self.pool.clone().maintain());
+        self.tunnels.restore().await;
+        tokio::spawn(self.tunnels.clone().maintain());
     }
 
     pub fn status(&self) -> DaemonStatus {
@@ -134,35 +146,12 @@ impl Daemon {
     }
 
     pub(crate) async fn load_hosts(&self) -> Result<Loaded, RpcError> {
-        let path = self.ssh_config_path.clone();
-        tokio::task::spawn_blocking(move || ssh_config::load(&path))
-            .await
-            .map_err(|err| RpcError::new(ErrorKind::Internal, err.to_string()))
+        load_hosts(&self.ssh_config_path).await
     }
 
     /// Finds a host by id, returning it with the config it came from.
     pub(crate) async fn resolve_host(&self, id: &str) -> Result<(Entry, Loaded), RpcError> {
-        let loaded = self.load_hosts().await?;
-        match loaded.find(id) {
-            Some(entry) => Ok((entry.clone(), loaded)),
-            None => {
-                let known: Vec<String> = loaded
-                    .entries
-                    .iter()
-                    .take(20)
-                    .map(|e| e.host.id.clone())
-                    .collect();
-                let hint = if known.is_empty() {
-                    "no hosts are configured; add a Host block to ~/.ssh/config".to_string()
-                } else {
-                    format!("known hosts: {}", known.join(", "))
-                };
-                Err(
-                    RpcError::new(ErrorKind::HostNotFound, format!("unknown host `{id}`"))
-                        .with_hint(hint),
-                )
-            }
-        }
+        resolve_host(&self.ssh_config_path, id).await
     }
 
     /// Asks the accept loop to stop; the socket file is removed on the way out.
@@ -172,6 +161,39 @@ impl Daemon {
 
     /// Closes SSH connections before the process exits.
     pub async fn close(&self) {
+        self.tunnels.stop_all().await;
         self.pool.disconnect_all().await;
+    }
+}
+
+pub(crate) async fn load_hosts(path: &Path) -> Result<Loaded, RpcError> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || ssh_config::load(&path))
+        .await
+        .map_err(|err| RpcError::new(ErrorKind::Internal, err.to_string()))
+}
+
+/// Finds a host by id in the ssh_config at `path`.
+pub(crate) async fn resolve_host(path: &Path, id: &str) -> Result<(Entry, Loaded), RpcError> {
+    let loaded = load_hosts(path).await?;
+    match loaded.find(id) {
+        Some(entry) => Ok((entry.clone(), loaded)),
+        None => {
+            let known: Vec<String> = loaded
+                .entries
+                .iter()
+                .take(20)
+                .map(|e| e.host.id.clone())
+                .collect();
+            let hint = if known.is_empty() {
+                "no hosts are configured; add a Host block to ~/.ssh/config".to_string()
+            } else {
+                format!("known hosts: {}", known.join(", "))
+            };
+            Err(
+                RpcError::new(ErrorKind::HostNotFound, format!("unknown host `{id}`"))
+                    .with_hint(hint),
+            )
+        }
     }
 }

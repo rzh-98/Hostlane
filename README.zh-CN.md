@@ -4,7 +4,7 @@
   <p>给你自己的 agent 用的 SSH 运行时。让 Codex、Claude Code 或自研 agent 在本机操作远程服务器：执行命令、修改文件、端口映射和管理 web 服务端口，并带有指纹校验、审批和审计。</p>
   <p>不内置 LLM；服务器端不需要安装任何组件，只要有 <code>sshd</code>。</p>
   <p>
-    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M3)-orange" />
+    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M4)-orange" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -21,7 +21,7 @@
 </div>
 
 > [!WARNING]
-> Hostlane 仍处于早期开发阶段。目前可用的是 M0–M3：守护进程、CLI、导入 `~/.ssh/config`、SSH 连接池与主机指纹校验、`exec`、会话监视器、审计日志、文件操作（读取、列目录、搜索、带哈希校验的原子修改、上传、下载、撤销），以及端口管理（端口发现，关联进程、systemd 和 Docker，HTTP/HTTPS 探测和证书有效期，备注，空闲端口查找）。隧道和审批会在 M4–M6 陆续实现，见[路线图](#路线图)。
+> Hostlane 仍处于早期开发阶段。目前可用的是 M0–M4：守护进程、CLI、导入 `~/.ssh/config`、SSH 连接池与主机指纹校验、`exec`、会话监视器、审计日志、文件操作（读取、列目录、搜索、带哈希校验的原子修改、上传、下载、撤销），端口管理（端口发现，关联进程、systemd 和 Docker，HTTP/HTTPS 探测和证书有效期，备注，空闲端口查找）和隧道（本地转发和端口冲突检测、保存的隧道随守护进程恢复、断线自动重连、agent 临时隧道到期关闭）。审批和 MCP 会在 M5–M6 陆续实现，见[路线图](#路线图)。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -119,6 +119,10 @@ npm run dev
 | `hostlane port-check <host> <port>`                                                | 检查端口是否被占用，占用时给出最近的空闲端口                             |
 | `hostlane free-port <host> [--from N] [--to N] [--count N]`                        | 查找空闲端口（默认 8000–9999），有备注的端口视为已预留                   |
 | `hostlane port-note <host> <port> [--name N] [--project P] [--note T]`             | 给端口命名并关联项目；不带任何字段时清除备注                             |
+| `hostlane tunnel open <host> <port> [--local-port N] [--save] [--ttl SECS]`        | 把服务器端口转发到本机 `127.0.0.1`；自动选空闲端口，冲突时给出建议端口   |
+| `hostlane tunnels`                                                                 | 列出隧道、状态、本机地址、连接数和流量                                   |
+| `hostlane tunnel close <id>` / `close --session S`                                 | 关闭一条隧道，或关闭某个 agent 会话创建的全部临时隧道                    |
+| `hostlane tunnel start` / `update` / `delete <id>`                                 | 重新启动已停止的隧道、修改端口或保存，或删除隧道                         |
 | `hostlane trust <host> [--fingerprint SHA256:…]`                                   | 核对并信任主机指纹，写入 Hostlane 自己的 `known_hosts`                   |
 | `hostlane connect` / `disconnect <host>`                                           | 建立或断开到主机的连接                                                   |
 | `hostlane connections`                                                             | 查看连接状态、延迟、活动通道和主机指纹                                   |
@@ -164,6 +168,7 @@ M6 提供 MCP Server 之前，agent 通过 CLI 使用 Hostlane。把下面这段
 - 每次修改都会返回 `change_id`，用 `hostlane revert <change_id>` 撤销。
 - 部署服务前用 `hostlane --json free-port <host>` 或 `port-check <host> <port>` 选端口，不要猜；`hostlane --json ports <host>` 列出端口对应的进程、容器和 HTTP 状态，`port <host> <port>` 查看单个端口。
 - 用 `hostlane port-note <host> <port> --name … --project …` 记录新部署服务占用的端口。
+- 需要在本机访问服务器上的服务时，用 `hostlane --json tunnel open <host> <port>` 建立隧道，使用返回的 `tunnel.url`；用完后 `hostlane tunnel close <id>`，会话结束时运行 `hostlane tunnel close --session <会话 ID>`。不要绑定 0.0.0.0，除非用户明确要求。
 - 命令都加 `--json`；失败时读取 error.kind 和 error.hint 决定下一步。
 - 遇到 HOST_KEY_UNKNOWN 或 HOST_KEY_CHANGED 时停下来告诉用户，不要自行信任主机密钥。
 - 设置 `HOSTLANE_CLIENT=<agent 名称>` 和 `HOSTLANE_SESSION=<会话 ID>`，审计和会话页会按它们区分来源。
@@ -179,8 +184,8 @@ M6 提供 MCP Server 之前，agent 通过 CLI 使用 Hostlane。把下面这段
 | **M1** 连接与执行 | `russh` 连接池、主机指纹校验、`exec`、会话监视器、审计日志                                | ✅ 已完成 |
 | **M2** 文件       | `read_file`、`list_dir`、`search`、`apply_patch`、`write_file`                            | ✅ 已完成 |
 | **M3** 端口       | 端口发现、进程关联、HTTP 探测、端口备注、空闲端口查找                                     | ✅ 已完成 |
-| **M4** 隧道       | 本地转发、配置持久化、自动重连、冲突检测、agent 临时隧道                                  | 下一步    |
-| **M5** 策略       | 风险分级、规则配置、阻塞式审批、急停                                                      | 计划中    |
+| **M4** 隧道       | 本地转发、配置持久化、自动重连、冲突检测、agent 临时隧道                                  | ✅ 已完成 |
+| **M5** 策略       | 风险分级、规则配置、阻塞式审批、急停                                                      | 下一步    |
 | **M6** MCP 与分发 | `hostlane mcp`、接入页、用户级服务注册、打包内置二进制                                    | 计划中    |
 
 完整需求（含编号和优先级）见 [docs/requirements.md](docs/requirements.md)。
@@ -191,7 +196,7 @@ M6 提供 MCP Server 之前，agent 通过 CLI 使用 Hostlane。把下面这段
 ├─ Cargo.toml                  Rust workspace
 ├─ crates/
 │  ├─ hostlane-protocol/       线上传输的类型：JSON-RPC 帧、错误码、各方法的参数和结果
-│  ├─ hostlane-core/           守护进程：socket 服务、SSH 连接池、exec、文件（SFTP）、端口、审计（SQLite）、客户端
+│  ├─ hostlane-core/           守护进程：socket 服务、SSH 连接池、exec、文件（SFTP）、端口、隧道、审计（SQLite）、客户端
 │  └─ hostlane-cli/            `hostlane` 二进制：CLI + `daemon` 子命令
 ├─ apps/desktop/               Electron 桌面端（基于 Desktop-Starter）
 │  └─ src/

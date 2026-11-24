@@ -5,7 +5,7 @@
 use hostlane_protocol::{
     AuditEntry, AuditListParams, AuditOutcome, ClientInfo, ConnectionsList, ErrorKind, Event,
     ExecList, ExecListParams, ExecParams, FileChangeParams, HostParams, HostsList, RpcError,
-    TrustParams, TrustResult, method,
+    TrustParams, TrustResult, TunnelParams, method,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -38,6 +38,11 @@ const AUDITED: &[&str] = &[
     method::PORTS_CHECK,
     method::PORTS_FIND_FREE,
     method::PORTS_ANNOTATE,
+    method::TUNNELS_OPEN,
+    method::TUNNELS_CLOSE,
+    method::TUNNELS_START,
+    method::TUNNELS_UPDATE,
+    method::TUNNELS_DELETE,
 ];
 
 pub(crate) async fn dispatch(
@@ -58,7 +63,10 @@ pub(crate) async fn dispatch(
     let result = run(daemon, client, name, params).await;
     let host = host.or_else(|| {
         let value = result.as_ref().ok()?;
-        value.get("host")?.as_str().map(str::to_owned)
+        let host = value
+            .get("host")
+            .or_else(|| value.pointer("/tunnel/host"))?;
+        host.as_str().map(str::to_owned)
     });
     let (outcome, error, summary) = match &result {
         Ok(value) => (AuditOutcome::Ok, None, summarize(value)),
@@ -238,6 +246,18 @@ async fn run(
         method::PORTS_CHECK => to_value(ports::check(daemon, parse(params)?).await?),
         method::PORTS_FIND_FREE => to_value(ports::find_free(daemon, parse(params)?).await?),
         method::PORTS_ANNOTATE => to_value(ports::annotate(daemon, parse(params)?).await?),
+        method::TUNNELS_LIST => to_value(daemon.tunnels.list()),
+        method::TUNNELS_OPEN => to_value(daemon.tunnels.open(client, parse(params)?).await?),
+        method::TUNNELS_CLOSE => to_value(daemon.tunnels.close(parse(params)?).await?),
+        method::TUNNELS_START => {
+            let params: TunnelParams = parse(params)?;
+            to_value(daemon.tunnels.start(&params.id).await?)
+        }
+        method::TUNNELS_UPDATE => to_value(daemon.tunnels.update(parse(params)?).await?),
+        method::TUNNELS_DELETE => {
+            let params: TunnelParams = parse(params)?;
+            to_value(daemon.tunnels.delete(&params.id).await?)
+        }
         method::AUDIT_LIST => {
             let params: AuditListParams = parse_or_default(params)?;
             to_value(daemon.store.list_calls(params).await?)

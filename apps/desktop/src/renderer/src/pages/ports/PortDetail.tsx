@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ExternalLink } from 'lucide-react'
 import { formatAgo } from '@/app/format'
 import { cn } from '@/lib/cn'
 import { Badge, Button, Field, FormRow, Input, Section, Textarea } from '@/ui'
@@ -23,11 +24,21 @@ interface PortDetailProps {
   port: ListeningPort
   probing: boolean
   savingNote: boolean
+  forwarding: boolean
+  onForward: () => void
   onProbe: (serverName: string) => void
   onSaveNote: (draft: NoteDraft) => void
 }
 
-export function PortDetail({ port, probing, savingNote, onProbe, onSaveNote }: PortDetailProps) {
+export function PortDetail({
+  port,
+  probing,
+  savingNote,
+  forwarding,
+  onForward,
+  onProbe,
+  onSaveNote
+}: PortDetailProps) {
   const [serverName, setServerName] = useState('')
   const [draft, setDraft] = useState<NoteDraft>({
     name: port.note?.name ?? '',
@@ -63,7 +74,16 @@ export function PortDetail({ port, probing, savingNote, onProbe, onSaveNote }: P
       </header>
 
       {port.listening && (
-        <Section title="监听" divided>
+        <Section
+          title="监听"
+          divided
+          actions={
+            <Button size="sm" disabled={forwarding} onClick={onForward}>
+              <ExternalLink />
+              {forwarding ? '转发中…' : '转发到本机并打开'}
+            </Button>
+          }
+        >
           <Row label="地址" value={port.addresses.join('\n')} mono />
           {port.bind && <Row label="可达范围" value={bindLabels[port.bind].text} />}
           {port.pids.length > 1 && <Row label="进程" value={port.pids.join(' ')} mono />}

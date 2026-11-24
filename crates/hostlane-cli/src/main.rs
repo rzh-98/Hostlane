@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 
 mod files;
 mod ports;
+mod tunnels;
 
 /// Lets your own agent operate remote servers over SSH, safely, from this machine.
 #[derive(Parser)]
@@ -84,6 +85,8 @@ enum Command {
     Files(files::FileCommand),
     #[command(flatten)]
     Ports(ports::PortCommand),
+    #[command(flatten)]
+    Tunnels(tunnels::TunnelCommand),
     /// Open the pooled connection to a host and show its host key.
     Connect { host: String },
     /// Trust a host's key after you have verified its fingerprint.
@@ -217,6 +220,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         } => output(&client, output_id, stream.into(), offset, limit, json).await?,
         Command::Files(command) => files::run(&client, command, json).await?,
         Command::Ports(command) => ports::run(&client, command, json).await?,
+        Command::Tunnels(command) => tunnels::run(&client, command, json).await?,
         Command::Connect { host } => connect(&client, &host, json).await?,
         Command::Trust { host, fingerprint } => trust(&client, &host, fingerprint, json).await?,
         Command::Disconnect { host } => {
@@ -657,6 +661,16 @@ async fn audit(
                     let port = e.params.get("port").and_then(Value::as_u64)?;
                     Some(format!("port {port}"))
                 })
+                .or_else(|| {
+                    let port = e.params.get("remote_port").and_then(Value::as_u64)?;
+                    Some(format!("remote port {port}"))
+                })
+                .or_else(|| {
+                    e.params
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
                 .unwrap_or_default();
             [
                 ago(e.started_at),
@@ -691,7 +705,8 @@ async fn watch(client: &Client, host: Option<String>, json: bool) -> Result<()> 
             Event::Connection { connection } => Some(connection.host.clone()),
             Event::FileChanged { change } => Some(change.host.clone()),
             Event::AuditAppended { entry } => entry.host.clone(),
-            Event::Lagged { .. } => None,
+            Event::Tunnel { tunnel } => Some(tunnel.host.clone()),
+            Event::TunnelRemoved { .. } | Event::Lagged { .. } => None,
         };
         if let (Some(filter), Some(event_host)) = (&host, &event_host)
             && filter != event_host
@@ -726,7 +741,10 @@ async fn watch(client: &Client, host: Option<String>, json: bool) -> Result<()> 
                     .unwrap_or_default();
                 println!("[{}] {}{duration}", exec.host, exec_outcome(&exec));
             }
-            Event::Connection { .. } | Event::AuditAppended { .. } => {}
+            Event::Connection { .. }
+            | Event::AuditAppended { .. }
+            | Event::Tunnel { .. }
+            | Event::TunnelRemoved { .. } => {}
             Event::FileChanged { change } => {
                 let what = if change.deleted {
                     "removed".to_string()

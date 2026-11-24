@@ -18,6 +18,7 @@ mod remote;
 mod ssh;
 mod state;
 mod store;
+mod tunnels;
 mod util;
 
 pub use state::{Daemon, DaemonOptions, OpenError};

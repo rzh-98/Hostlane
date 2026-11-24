@@ -14,6 +14,7 @@ mod hosts;
 mod ports;
 mod rpc;
 mod status;
+mod tunnels;
 
 pub use audit::{AuditEntry, AuditList, AuditListParams, AuditOutcome};
 pub use error::{ErrorKind, RpcError, RpcErrorData};
@@ -39,6 +40,10 @@ pub use ports::{
 };
 pub use rpc::{ClientInfo, Notification, Request, Response};
 pub use status::DaemonStatus;
+pub use tunnels::{
+    Tunnel, TunnelCloseParams, TunnelOpenParams, TunnelOpened, TunnelParams, TunnelState,
+    TunnelUpdateParams, TunnelsClosed, TunnelsList,
+};
 
 /// Bumped whenever a breaking change is made to the wire format.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -69,6 +74,12 @@ pub mod method {
     pub const PORTS_CHECK: &str = "ports.check";
     pub const PORTS_FIND_FREE: &str = "ports.find_free";
     pub const PORTS_ANNOTATE: &str = "ports.annotate";
+    pub const TUNNELS_LIST: &str = "tunnels.list";
+    pub const TUNNELS_OPEN: &str = "tunnels.open";
+    pub const TUNNELS_CLOSE: &str = "tunnels.close";
+    pub const TUNNELS_START: &str = "tunnels.start";
+    pub const TUNNELS_UPDATE: &str = "tunnels.update";
+    pub const TUNNELS_DELETE: &str = "tunnels.delete";
     pub const AUDIT_LIST: &str = "audit.list";
     /// Keeps the connection open and streams `event` notifications.
     pub const EVENTS_SUBSCRIBE: &str = "events.subscribe";
@@ -102,6 +113,12 @@ pub mod method {
         PORTS_CHECK,
         PORTS_FIND_FREE,
         PORTS_ANNOTATE,
+        TUNNELS_LIST,
+        TUNNELS_OPEN,
+        TUNNELS_CLOSE,
+        TUNNELS_START,
+        TUNNELS_UPDATE,
+        TUNNELS_DELETE,
         AUDIT_LIST,
         EVENTS_SUBSCRIBE,
     ];

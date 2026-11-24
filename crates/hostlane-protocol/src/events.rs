@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{AuditEntry, Connection, ExecRecord, FileChange, OutputStream};
+use crate::{AuditEntry, Connection, ExecRecord, FileChange, OutputStream, Tunnel};
 
 /// Pushed to `events.subscribe` connections as `{"method":"event","params":<Event>}`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -32,6 +32,15 @@ pub enum Event {
     /// A call was added to the audit log.
     AuditAppended {
         entry: AuditEntry,
+    },
+    /// A tunnel was opened or changed state; also sent every few seconds while its
+    /// traffic counters move.
+    Tunnel {
+        tunnel: Tunnel,
+    },
+    /// A tunnel was closed (temporary) or deleted (saved).
+    TunnelRemoved {
+        id: String,
     },
     /// This subscriber fell behind and missed events; reload state with the list methods.
     Lagged {

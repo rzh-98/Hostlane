@@ -21,8 +21,9 @@ Hostlane/
 │  │     ├─ files.rs                files.*：SFTP 读写、搜索、原子替换、备份和撤销
 │  │     ├─ patch.rs                文本修改（精确替换、unified diff）和 diff 摘要
 │  │     ├─ ports/                  ports.*：端口发现（discover）、HTTP/HTTPS 探测（probe）、证书解析（cert）
+│  │     ├─ tunnels.rs              tunnels.*：本地转发、冲突检测、断线重连、临时隧道到期关闭
 │  │     ├─ remote.rs               Hostlane 自己运行的辅助命令（搜索、mv 兜底、端口扫描）
-│  │     ├─ store.rs                SQLite：审计日志（只追加）、命令记录、文件修改记录和端口备注
+│  │     ├─ store.rs                SQLite：审计日志（只追加）、命令记录、文件修改记录、端口备注和保存的隧道
 │  │     └─ events.rs               事件总线（broadcast）
 │  └─ hostlane-cli/              `hostlane` 二进制：CLI + `daemon` 子命令（之后加 `mcp`）
 ├─ apps/desktop/                 Electron 桌面端（基于 Desktop-Starter）
@@ -63,13 +64,13 @@ Electron 主进程 ◄─IPC─ 渲染进程（沙箱）────────
 
 数据目录中的文件：
 
-| 文件                                         | 内容                                                                                                                                                                              |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hostlane.db`                                | SQLite（WAL）：`calls` 表是审计日志，由触发器禁止 UPDATE 和 DELETE；`execs` 表是会话监视器使用的命令记录；`file_changes` 表记录每次文件修改及其 diff；`port_notes` 表保存端口备注 |
-| `backups/<change_id>`                        | 文件被修改、上传覆盖或删除前的内容，权限 0600，保留 30 天，供 `files.revert` 使用                                                                                                 |
-| `outputs/<id>.stdout`、`outputs/<id>.stderr` | 命令的完整输出，权限 0600；每个流最多保存 64 MiB，保留 30 天                                                                                                                      |
-| `known_hosts`                                | Hostlane 信任的主机密钥。Hostlane 也会读取 ssh_config 同目录下的 `known_hosts`（或 `UserKnownHostsFile`），但只写这个文件                                                         |
-| `daemon.log`                                 | `hostlane daemon start` 启动时的日志                                                                                                                                              |
+| 文件                                         | 内容                                                                                                                                                                                                        |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hostlane.db`                                | SQLite（WAL）：`calls` 表是审计日志，由触发器禁止 UPDATE 和 DELETE；`execs` 表是会话监视器使用的命令记录；`file_changes` 表记录每次文件修改及其 diff；`port_notes` 表保存端口备注；`tunnels` 表保存隧道配置 |
+| `backups/<change_id>`                        | 文件被修改、上传覆盖或删除前的内容，权限 0600，保留 30 天，供 `files.revert` 使用                                                                                                                           |
+| `outputs/<id>.stdout`、`outputs/<id>.stderr` | 命令的完整输出，权限 0600；每个流最多保存 64 MiB，保留 30 天                                                                                                                                                |
+| `known_hosts`                                | Hostlane 信任的主机密钥。Hostlane 也会读取 ssh_config 同目录下的 `known_hosts`（或 `UserKnownHostsFile`），但只写这个文件                                                                                   |
+| `daemon.log`                                 | `hostlane daemon start` 启动时的日志                                                                                                                                                                        |
 
 socket 文件权限为 0600，所在目录权限为 0700。启动时如果发现残留的 socket 文件，会先尝试连接：能连上说明已有守护进程在运行，此时拒绝启动；连不上则删除残留文件。
 
@@ -106,7 +107,7 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 ← {"jsonrpc":"2.0","method":"event","params":{"type":"exec_output","id":"ex-…","stream":"stdout","data":"…"}}
 ```
 
-事件类型（`Event`）：`exec_started`、`exec_output`、`exec_finished`、`connection`（连接状态变化）、`file_changed`（文件被修改，不含 diff）、`audit_appended`（新增一条审计记录），以及 `lagged`（订阅方处理太慢，丢了 `skipped` 条事件，应重新拉取状态）。每条命令的每个流最多推送 1 MiB，完整内容用 `output.read` 读取。
+事件类型（`Event`）：`exec_started`、`exec_output`、`exec_finished`、`connection`（连接状态变化）、`file_changed`（文件被修改，不含 diff）、`audit_appended`（新增一条审计记录）、`tunnel`（隧道建立或状态变化；流量计数变化时每 2 秒推送一次）、`tunnel_removed`（临时隧道关闭或隧道被删除），以及 `lagged`（订阅方处理太慢，丢了 `skipped` 条事件，应重新拉取状态）。每条命令的每个流最多推送 1 MiB，完整内容用 `output.read` 读取。
 
 ### 已实现的方法
 
@@ -136,6 +137,12 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 | `ports.check`      | `PortParams`         | `PortCheck`                    | ✓    |
 | `ports.find_free`  | `FindFreeParams`     | `FreePorts`                    | ✓    |
 | `ports.annotate`   | `PortAnnotateParams` | `PortAnnotated`                | ✓    |
+| `tunnels.list`     | 无                   | `TunnelsList`                  |      |
+| `tunnels.open`     | `TunnelOpenParams`   | `TunnelOpened`                 | ✓    |
+| `tunnels.close`    | `TunnelCloseParams`  | `TunnelsClosed`                | ✓    |
+| `tunnels.start`    | `TunnelParams`       | `TunnelOpened`                 | ✓    |
+| `tunnels.update`   | `TunnelUpdateParams` | `TunnelOpened`                 | ✓    |
+| `tunnels.delete`   | `TunnelParams`       | `TunnelsClosed`                | ✓    |
 | `audit.list`       | `AuditListParams`    | `AuditList`                    |      |
 | `events.subscribe` | 无                   | `Subscribed`，之后推送 `Event` |      |
 
@@ -185,6 +192,17 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 - 备注（`ports.annotate`）保存在本机的 `port_notes` 表中，不会写到服务器上。有备注但没有在监听的端口也会出现在列表中（`listening: false`）。`ports.find_free` 和 `ports.check` 的建议端口会跳过正在监听、Docker 已发布和有备注的端口。
 - 审计日志中，端口列表只记录条数。
 
+隧道（`tunnels.*`）的要点：
+
+- 只支持本地转发（`ssh -L`）：守护进程在本机监听，每个进来的连接通过主机连接池中的 SSH 连接打开一个 `direct-tcpip` 通道，转发到 `remote_host:remote_port`（默认 `127.0.0.1`，即服务器本机）。转发通道不占用每条连接 8 个 channel 的配额。运行中的隧道会一直持有这条 SSH 连接，所以连接池不会把它当作空闲连接关闭。
+- 本机端口默认只绑定 `127.0.0.1`。绑定其他地址（如 `0.0.0.0`）必须传 `allow_public: true`（CLI 为 `--allow-public`），否则返回 `INVALID_PARAMS`。
+- 不传 `local_port` 时，优先使用与远程相同的端口（≥ 1024 且空闲时），否则依次尝试其后 20 个端口，最后由系统分配。指定的端口被本机程序或其他隧道（包括已停止的保存隧道）占用时返回 `PORT_IN_USE`，`details` 带 `port` 和 `suggested_port`。判断占用时，除了尝试绑定，还会尝试连接该端口，以发现监听在通配地址上的程序。
+- `tunnels.open` 先建立 SSH 连接并试连一次目标：服务器禁止 TCP 转发时返回 `FORWARDING_DENIED`；目标没有在监听只作为 `warnings` 返回，隧道照常建立。
+- 状态：`active`（运行中）、`reconnecting`（SSH 连接断开，本机端口保持监听，按 1、2、4…60 秒退避重连；有本机连接进来时立即重试，连接最多等 15 秒）、`failed`（本机端口被占用、主机密钥未信任或已变化、主机不存在，不再重试，修复后用 `tunnels.start`）、`stopped`（已停止的保存隧道）。`hosts.disconnect` 会断开连接，运行中的隧道随后会重新连上。
+- 单个转发连接失败（例如目标拒绝连接）不影响隧道状态，原因记在 `last_connection_error`，下一次成功转发时清除。
+- 保存的隧道（`save: true`）写入 `tunnels` 表，`auto_start` 默认为 true，守护进程启动时恢复。未保存的隧道只在守护进程运行期间存在；除桌面端外，调用方创建的未保存隧道默认 1 小时后关闭（`ttl_secs`，最长 24 小时），到期关闭会以 `hostlane` 为调用方写入审计日志。`tunnels.close` 传 `session` 时关闭该会话创建的全部临时隧道，agent 应在会话结束时调用。
+- `tunnels.close` 停止隧道：临时隧道被移除，保存的隧道变为 `stopped`；`tunnels.delete` 同时删除保存的配置。`tunnels.update` 修改本机端口或绑定地址时，运行中的隧道会换到新端口（失败时恢复原端口）；修改远程地址对之后的新连接生效；`save: true` 会保存临时隧道并取消到期时间。
+
 ### 错误类型
 
 | kind                                                                                   | code            | 含义                                                                  |
@@ -205,6 +223,9 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 | `PATCH_FAILED`                                                                         | -32013          | 某处编辑或 hunk 与文件不匹配，没有写入任何内容                        |
 | `FILE_ERROR`                                                                           | -32014          | 其他 SFTP 错误，`message` 中带服务器给出的原因                        |
 | `REMOTE_COMMAND_FAILED`                                                                | -32015          | Hostlane 在服务器上运行的辅助命令（如端口扫描）失败或超时             |
+| `PORT_IN_USE`                                                                          | -32016          | 隧道的本机端口已被占用；`details` 带 `port` 和 `suggested_port`       |
+| `TUNNEL_NOT_FOUND`                                                                     | -32017          | 隧道 ID 不存在                                                        |
+| `FORWARDING_DENIED`                                                                    | -32018          | SSH 服务器禁止 TCP 转发（`AllowTcpForwarding no`）                    |
 
 ### 新增一个方法
 

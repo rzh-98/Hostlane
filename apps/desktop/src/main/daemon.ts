@@ -18,7 +18,10 @@ const SLOW_METHODS = new Set([
   'ports.list',
   'ports.inspect',
   'ports.check',
-  'ports.find_free'
+  'ports.find_free',
+  'tunnels.open',
+  'tunnels.start',
+  'tunnels.update'
 ])
 const START_TIMEOUT_MS = 15_000
 const RESUBSCRIBE_MIN_MS = 1_000

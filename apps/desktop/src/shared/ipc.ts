@@ -29,6 +29,12 @@ export const RENDERER_METHODS = [
   'ports.check',
   'ports.find_free',
   'ports.annotate',
+  'tunnels.list',
+  'tunnels.open',
+  'tunnels.close',
+  'tunnels.start',
+  'tunnels.update',
+  'tunnels.delete',
   'audit.list'
 ] as const
 export type RendererMethod = (typeof RENDERER_METHODS)[number]

@@ -11,6 +11,9 @@ import type { HostsList } from '@shared/protocol/HostsList'
 import type { ListeningPort } from '@shared/protocol/ListeningPort'
 import type { PortAnnotated } from '@shared/protocol/PortAnnotated'
 import type { PortsList } from '@shared/protocol/PortsList'
+import type { TunnelOpened } from '@shared/protocol/TunnelOpened'
+import type { TunnelsList } from '@shared/protocol/TunnelsList'
+import { browserUrl, remoteHostFor } from '@/pages/tunnels/describe'
 import { answerLabel, bindLabels, certLabel, certTone, ownerLabel, statusTone } from './describe'
 import { FreePortDialog, type FreePortQuery } from './FreePortDialog'
 import { PortDetail, type NoteDraft } from './PortDetail'
@@ -58,6 +61,7 @@ export function PortsPage() {
   const [savingNote, setSavingNote] = useState(false)
   const [findingFree, setFindingFree] = useState(false)
   const [freeOpen, setFreeOpen] = useState(false)
+  const [forwarding, setForwarding] = useState(false)
   const request = useRef(0)
 
   useEffect(() => {
@@ -144,6 +148,47 @@ export function PortsPage() {
     setFeedback({
       tone: 'success',
       text: note ? `已保存端口 ${port.port} 的备注` : `已清除端口 ${port.port} 的备注`
+    })
+  }
+
+  const forward = async (port: ListeningPort) => {
+    if (!host) return
+    setForwarding(true)
+    setFeedback(null)
+    const remoteHost = remoteHostFor(port.addresses)
+    const existing = await callHostlane<TunnelsList>('tunnels.list')
+    let tunnel = existing.ok
+      ? existing.result.tunnels.find(
+          (t) =>
+            t.host === host &&
+            t.remote_port === port.port &&
+            t.remote_host === remoteHost &&
+            t.state === 'active'
+        )
+      : undefined
+    let warnings: string[] = []
+    if (!tunnel) {
+      const reply = await callHostlane<TunnelOpened>('tunnels.open', {
+        host,
+        remote_port: port.port,
+        remote_host: remoteHost,
+        name: port.note?.name ?? undefined
+      })
+      if (!reply.ok) {
+        setForwarding(false)
+        setFeedback(errorFeedback(reply.error))
+        return
+      }
+      tunnel = reply.result.tunnel
+      warnings = reply.result.warnings
+    }
+    setForwarding(false)
+    const url = browserUrl(tunnel, port.http?.scheme)
+    window.open(url)
+    setFeedback({
+      tone: 'success',
+      text: `已把 ${host}:${port.port} 转发到 ${url}`,
+      hint: warnings.length > 0 ? warnings.join('；') : '可以在隧道页查看和保存这条隧道'
     })
   }
 
@@ -274,6 +319,8 @@ export function PortsPage() {
                 port={selected}
                 probing={probing}
                 savingNote={savingNote}
+                forwarding={forwarding}
+                onForward={() => void forward(selected)}
                 onProbe={(serverName) => void probe(selected.port, serverName)}
                 onSaveNote={(draft) => void saveNote(selected, draft)}
               />
