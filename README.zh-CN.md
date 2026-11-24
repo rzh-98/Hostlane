@@ -4,7 +4,7 @@
   <p>给你自己的 agent 用的 SSH 运行时。让 Codex、Claude Code 或自研 agent 在本机操作远程服务器：执行命令、修改文件、端口映射和管理 web 服务端口，并带有指纹校验、审批和审计。</p>
   <p>不内置 LLM；服务器端不需要安装任何组件，只要有 <code>sshd</code>。</p>
   <p>
-    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M5)-orange" />
+    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M6)-orange" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -21,7 +21,7 @@
 </div>
 
 > [!WARNING]
-> Hostlane 仍处于早期开发阶段。目前可用的是 M0–M5：守护进程、CLI、导入 `~/.ssh/config`、SSH 连接池与主机指纹校验、`exec`、会话监视器、审计日志、文件操作（读取、列目录、搜索、带哈希校验的原子修改、上传、下载、撤销），端口管理（端口发现，关联进程、systemd 和 Docker，HTTP/HTTPS 探测和证书有效期，备注，空闲端口查找）和隧道（本地转发和端口冲突检测、保存的隧道随守护进程恢复、断线自动重连、agent 临时隧道到期关闭）和策略（命令风险分级、规则、带 diff 的阻塞式或异步审批、急停）。MCP 和打包分发会在 M6 实现，见[路线图](#路线图)。
+> Hostlane 仍处于早期开发阶段。目前可用的是 M0–M6：守护进程、CLI、导入 `~/.ssh/config`、SSH 连接池与主机指纹校验、`exec`、会话监视器、审计日志、文件操作（读取、列目录、搜索、带哈希校验的原子修改、上传、下载、撤销），端口管理（端口发现，关联进程、systemd 和 Docker，HTTP/HTTPS 探测和证书有效期，备注，空闲端口查找）和隧道（本地转发和端口冲突检测、保存的隧道随守护进程恢复、断线自动重连、agent 临时隧道到期关闭）和策略（命令风险分级、规则、带 diff 的阻塞式或异步审批、急停），以及 MCP Server、登录时启动的后台服务（launchd 或 systemd）和内置二进制的桌面端安装包。目前还没有签名发布版，见[路线图](#路线图)。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -64,7 +64,7 @@ Electron UI ──IPC──► 主进程 ──本地 socket──► hostlane d
                                               └─ 审计日志（SQLite）
 ```
 
-- `hostlane` 是单一二进制，包含 CLI、守护进程（`hostlane daemon …`），之后还会包含 MCP Server（`hostlane mcp`）。
+- `hostlane` 是单一二进制，包含 CLI、守护进程（`hostlane daemon …`）和 MCP Server（`hostlane mcp`）。
 - 客户端通过当前用户专属、权限为 `0600` 的 socket，以换行分隔的 JSON-RPC 2.0 与守护进程通信。
 - 错误带有稳定的 `kind` 和写给 agent 的 `hint`，agent 不用解析自然语言就能决定下一步。
 
@@ -72,7 +72,7 @@ Electron UI ──IPC──► 主进程 ──本地 socket──► hostlane d
 
 ## 快速开始
 
-目前还没有预编译版本，需要从源码构建。
+目前还没有发布版，需要从源码构建。
 
 **环境要求**：Rust 1.89+、Node.js 22.12+、npm 10+。
 
@@ -90,10 +90,16 @@ cargo test --workspace
 ./target/debug/hostlane read <host> /etc/hostname
 ./target/debug/hostlane daemon stop
 
+# 可选：登录时启动守护进程，崩溃后自动重启（launchd / systemd --user）
+./target/debug/hostlane daemon install
+
 # 桌面端（开发模式使用 target/debug/hostlane，必要时自动拉起守护进程）
 cd apps/desktop
 npm install
 npm run dev
+
+# 打包桌面端，release 版 hostlane 放在 Resources/bin（未签名）
+npm run pack        # 或 npm run dist:mac / dist:linux
 ```
 
 ### CLI
@@ -135,21 +141,23 @@ npm run dev
 | `hostlane label <host> [--env prod] [--tag T]… [--clear]`                          | 设置主机的环境和标签，规则和默认策略会用到                               |
 | `hostlane policy status` / `add` / `delete` / `check <host> <cmd>`                 | 查看或修改规则，或预先查看命令的风险和策略决定                           |
 | `hostlane call <method> '<params>'`                                                | 直接向守护进程发送 JSON-RPC 调用                                         |
+| `hostlane mcp`                                                                     | 以 stdio 方式向 agent 提供 MCP 工具；守护进程没运行时自动启动            |
 | `hostlane daemon start` / `stop`                                                   | 在后台启动守护进程，或让它退出                                           |
+| `hostlane daemon install [--print]` / `uninstall` / `service`                      | 注册为登录时启动的用户级服务（launchd 或 `systemd --user`）、移除或查看  |
 | `hostlane daemon run`                                                              | 在前台运行守护进程                                                       |
 | `hostlane daemon socket-path`                                                      | 输出客户端使用的 socket 路径                                             |
 
 ### 环境变量
 
-| 变量                  | 作用                                                   |
-| --------------------- | ------------------------------------------------------ |
-| `HOSTLANE_SOCKET`     | 覆盖 socket 路径                                       |
-| `HOSTLANE_DATA_DIR`   | 覆盖数据目录（日志、数据库）                           |
-| `HOSTLANE_SSH_CONFIG` | 覆盖 `ssh_config` 路径                                 |
-| `HOSTLANE_BIN`        | 桌面端使用的 `hostlane` 程序路径                       |
-| `HOSTLANE_CLIENT`     | CLI 调用的来源名称（默认 `cli`），显示在审计和会话页中 |
-| `HOSTLANE_SESSION`    | agent 会话 ID，会话页按它分组                          |
-| `HOSTLANE_NOTIFY`     | 设为 `0` 时，守护进程不再自己发送审批的系统通知        |
+| 变量                  | 作用                                                                      |
+| --------------------- | ------------------------------------------------------------------------- |
+| `HOSTLANE_SOCKET`     | 覆盖 socket 路径                                                          |
+| `HOSTLANE_DATA_DIR`   | 覆盖数据目录（日志、数据库）                                              |
+| `HOSTLANE_SSH_CONFIG` | 覆盖 `ssh_config` 路径                                                    |
+| `HOSTLANE_BIN`        | 桌面端使用的 `hostlane` 程序路径                                          |
+| `HOSTLANE_CLIENT`     | 调用来源名称（默认 `cli`，`hostlane mcp` 为 `mcp`），显示在审计和会话页中 |
+| `HOSTLANE_SESSION`    | agent 会话 ID，会话页按它分组                                             |
+| `HOSTLANE_NOTIFY`     | 设为 `0` 时，守护进程不再自己发送审批的系统通知                           |
 
 不想影响真实环境时，可以把这些变量都指向临时目录：
 
@@ -159,7 +167,56 @@ export HOSTLANE_SOCKET=/tmp/hl/hostlane.sock HOSTLANE_DATA_DIR=/tmp/hl HOSTLANE_
 
 ## 接入你的 agent
 
-M6 提供 MCP Server 之前，agent 通过 CLI 使用 Hostlane。把下面这段放进项目的 `AGENTS.md` 或 `CLAUDE.md`：
+### MCP
+
+`hostlane mcp` 是 stdio MCP Server，在 agent 的配置里添加它即可。桌面端“接入”页会给出填好路径的配置片段。如果 agent 的 `PATH` 里没有 `hostlane`，请使用绝对路径（“接入”页可以把它链接到 `~/.local/bin`）。
+
+**Codex**（`~/.codex/config.toml`）：
+
+```toml
+[mcp_servers.hostlane]
+command = "hostlane"
+args = ["mcp"]
+# 等待审批时调用会阻塞，留出足够时间
+tool_timeout_sec = 600
+```
+
+**Claude Code**：
+
+```bash
+claude mcp add --scope user hostlane -- hostlane mcp
+```
+
+**Cursor**（`~/.cursor/mcp.json` 或项目中的 `.cursor/mcp.json`）：
+
+```json
+{
+  "mcpServers": {
+    "hostlane": { "command": "hostlane", "args": ["mcp"] }
+  }
+}
+```
+
+工具与 CLI 一一对应：
+
+| 工具                                                                                     | 对应的 CLI                                               |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `hosts`                                                                                  | `hosts`、`connections`                                   |
+| `exec`、`read_output`、`exec_history`                                                    | `exec`、`output`、`history`                              |
+| `read_file`、`list_dir`、`search_files`                                                  | `read`、`ls`、`search`                                   |
+| `write_file`、`edit_file`、`apply_diff`、`upload_file`、`download_file`、`revert_change` | `write`、`edit`、`patch`、`upload`、`download`、`revert` |
+| `list_ports`、`inspect_port`、`check_port`、`find_free_port`、`annotate_port`            | `ports`、`port`、`port-check`、`free-port`、`port-note`  |
+| `list_tunnels`、`open_tunnel`、`close_tunnel`                                            | `tunnels`、`tunnel open`、`tunnel close`                 |
+| `check_policy`、`get_approval`                                                           | `policy check`、`approval`                               |
+
+- 策略、审批和审计与 CLI 完全相同。需要审批的调用会阻塞等待（最长 `approval_timeout_secs`，默认 120 秒）；传 `async: true` 时立即返回 `APPROVAL_REQUIRED` 和 `ticket_id`，审批通过后 agent 带上 `ticket_id` 重试同一调用。
+- 错误以工具错误返回，内容为 `{"error": {"kind", "message", "hint", "details"}}`。
+- 只能由人执行的操作不对 MCP 开放：审批、规则、信任主机指纹、主机标签和急停后恢复。
+- 调用方记为 `mcp`（或 `HOSTLANE_CLIENT`）；每个 MCP Server 进程是一个会话，以 MCP 客户端命名，例如 `codex-mcp-client-4121`。
+
+### 通过 CLI
+
+只能执行 shell 命令的 agent 使用 CLI。把下面这段放进项目的 `AGENTS.md` 或 `CLAUDE.md`：
 
 ```markdown
 ## 远程服务器
@@ -182,7 +239,7 @@ M6 提供 MCP Server 之前，agent 通过 CLI 使用 Hostlane。把下面这段
 - 设置 `HOSTLANE_CLIENT=<agent 名称>` 和 `HOSTLANE_SESSION=<会话 ID>`，审计和会话页会按它们区分来源。
 ```
 
-桌面端的“接入”页也有这段说明，可以一键复制。M6 起，这里还会给出 Codex、Claude Code 和 Cursor 的 MCP 配置片段。
+桌面端的“接入”页也有这段说明，可以一键复制。
 
 ## 路线图
 
@@ -194,7 +251,7 @@ M6 提供 MCP Server 之前，agent 通过 CLI 使用 Hostlane。把下面这段
 | **M3** 端口       | 端口发现、进程关联、HTTP 探测、端口备注、空闲端口查找                                     | ✅ 已完成 |
 | **M4** 隧道       | 本地转发、配置持久化、自动重连、冲突检测、agent 临时隧道                                  | ✅ 已完成 |
 | **M5** 策略       | 风险分级、规则配置、阻塞式审批、急停                                                      | ✅ 已完成 |
-| **M6** MCP 与分发 | `hostlane mcp`、接入页、用户级服务注册、打包内置二进制                                    | 下一步    |
+| **M6** MCP 与分发 | `hostlane mcp`、接入页、用户级服务注册、打包内置二进制                                    | ✅ 已完成 |
 
 完整需求（含编号和优先级）见 [docs/requirements.md](docs/requirements.md)。
 
@@ -205,10 +262,11 @@ M6 提供 MCP Server 之前，agent 通过 CLI 使用 Hostlane。把下面这段
 ├─ crates/
 │  ├─ hostlane-protocol/       线上传输的类型：JSON-RPC 帧、错误码、各方法的参数和结果
 │  ├─ hostlane-core/           守护进程：socket 服务、SSH 连接池、exec、文件（SFTP）、端口、隧道、策略与审批、审计（SQLite）、客户端
-│  └─ hostlane-cli/            `hostlane` 二进制：CLI + `daemon` 子命令
+│  └─ hostlane-cli/            `hostlane` 二进制：CLI、MCP Server（`mcp`）、`daemon` 子命令和服务注册
 ├─ apps/desktop/               Electron 桌面端（基于 Desktop-Starter）
 │  └─ src/
 │     ├─ main/daemon.ts        连接守护进程、按需拉起、转发事件
+│     ├─ main/setup.ts         把 CLI 链接到 ~/.local/bin，注册登录服务
 │     ├─ shared/protocol/      由 hostlane-protocol 生成的 TS 类型（不要手改）
 │     └─ renderer/src/pages/   主机、端口、隧道、会话、审批、审计、接入、设置
 └─ docs/                       需求、架构、截图

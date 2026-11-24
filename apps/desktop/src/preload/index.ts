@@ -21,6 +21,12 @@ const api: DesktopApi = {
       }
     }
   },
+  setup: {
+    status: () => ipcRenderer.invoke(IpcChannel.setupStatus),
+    linkCli: () => ipcRenderer.invoke(IpcChannel.setupLinkCli),
+    installService: () => ipcRenderer.invoke(IpcChannel.setupInstallService),
+    uninstallService: () => ipcRenderer.invoke(IpcChannel.setupUninstallService)
+  },
   onNavigate: (listener) => {
     const handler = (_event: IpcRendererEvent, page: string) => listener(page)
     ipcRenderer.on(IpcChannel.navigate, handler)

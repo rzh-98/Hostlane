@@ -18,8 +18,10 @@ use hostlane_protocol::{
 use serde_json::{Value, json};
 
 mod files;
+mod mcp;
 mod policy;
 mod ports;
+mod service;
 mod tunnels;
 
 /// Lets your own agent operate remote servers over SSH, safely, from this machine.
@@ -147,6 +149,11 @@ enum Command {
         /// Params as a JSON value, e.g. '{"host":"web1"}'.
         params: Option<String>,
     },
+    /// Serve Hostlane's tools to an agent over MCP (stdio).
+    ///
+    /// Add it to your agent's MCP settings as the command `hostlane mcp`. Starts the
+    /// daemon if it is not running.
+    Mcp,
     /// Manage the background daemon.
     #[command(subcommand)]
     Daemon(DaemonCommand),
@@ -177,6 +184,17 @@ enum DaemonCommand {
     Stop,
     /// Print the socket path clients use.
     SocketPath,
+    /// Run the daemon as a per-user service that starts at login (launchd on macOS,
+    /// systemd --user on Linux). Restarts a daemon that is already running.
+    Install {
+        /// Print the service file instead of installing it.
+        #[arg(long)]
+        print: bool,
+    },
+    /// Remove the per-user service and stop the daemon it runs.
+    Uninstall,
+    /// Show whether the per-user service is installed.
+    Service,
 }
 
 fn main() -> ExitCode {
@@ -297,11 +315,38 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             };
             print_json(&client.call(&method, params).await?);
         }
+        Command::Mcp => mcp::serve(socket, cli.socket).await?,
         Command::Daemon(DaemonCommand::Run) => daemon_run(socket).await?,
         Command::Daemon(DaemonCommand::Start) => daemon_start(&client, cli.socket, json).await?,
         Command::Daemon(DaemonCommand::Stop) => {
             client.call(method::DAEMON_SHUTDOWN, Value::Null).await?;
             output_value(json, json!({ "stopped": true }), "Hostlane daemon stopped.");
+        }
+        Command::Daemon(DaemonCommand::Install { print }) => {
+            daemon_install(&client, cli.socket, print, json).await?
+        }
+        Command::Daemon(DaemonCommand::Uninstall) => {
+            let removed = service::uninstall()?;
+            let text = if removed {
+                "Removed the Hostlane service; the daemon is stopped."
+            } else {
+                "No Hostlane service is installed."
+            };
+            output_value(json, json!({ "uninstalled": removed }), text);
+        }
+        Command::Daemon(DaemonCommand::Service) => {
+            let status = service::status();
+            let text = match (&status.path, &status.binary) {
+                _ if !status.supported => {
+                    "A background service is not supported on this system.".to_string()
+                }
+                (Some(path), Some(binary)) if status.installed => {
+                    format!("Installed: {}\nRuns: {binary}", path.display())
+                }
+                (Some(path), _) if status.installed => format!("Installed: {}", path.display()),
+                _ => "Not installed. Run `hostlane daemon install`.".to_string(),
+            };
+            output_value(json, serde_json::to_value(&status)?, &text);
         }
         Command::Daemon(DaemonCommand::SocketPath) => {
             output_value(
@@ -874,19 +919,88 @@ async fn daemon_run(socket: PathBuf) -> Result<()> {
 }
 
 async fn daemon_start(client: &Client, socket: Option<PathBuf>, json: bool) -> Result<()> {
-    if let Ok(status) = client
-        .call_as::<DaemonStatus>(method::DAEMON_STATUS, Value::Null)
-        .await
-    {
+    let (started, status) = ensure_daemon(client, socket).await?;
+    if started {
+        output_value(
+            json,
+            json!({ "started": true, "pid": status.pid }),
+            &format!("Hostlane daemon started (pid {}).", status.pid),
+        );
+    } else {
         output_value(
             json,
             json!({ "started": false, "pid": status.pid }),
             &format!("Hostlane daemon is already running (pid {}).", status.pid),
         );
+    }
+    Ok(())
+}
+
+async fn daemon_install(
+    client: &Client,
+    socket: Option<PathBuf>,
+    print: bool,
+    json: bool,
+) -> Result<()> {
+    let definition = service::Definition::current(socket.as_deref())?;
+    if print {
+        let content = if cfg!(target_os = "macos") {
+            service::launchd_plist(&definition)
+        } else {
+            service::systemd_unit(&definition)
+        };
+        output_value(json, json!({ "content": content }), content.trim_end());
         return Ok(());
     }
+    let installed = service::install(client, &definition).await?;
+    let mut text = format!(
+        "Installed the Hostlane service ({}); the daemon now starts at login.",
+        installed.path.display()
+    );
+    if installed.restarted {
+        text.push_str("\nThe daemon that was running was restarted under the service.");
+    }
+    output_value(
+        json,
+        json!({
+            "installed": true,
+            "path": installed.path,
+            "binary": definition.binary,
+            "restarted": installed.restarted,
+        }),
+        &text,
+    );
+    Ok(())
+}
 
+/// Starts the daemon in the background unless it is running; `true` if it was started.
+pub(crate) async fn ensure_daemon(
+    client: &Client,
+    socket: Option<PathBuf>,
+) -> Result<(bool, DaemonStatus)> {
+    if let Ok(status) = client
+        .call_as::<DaemonStatus>(method::DAEMON_STATUS, Value::Null)
+        .await
+    {
+        return Ok((false, status));
+    }
     let log_path = paths::log_path();
+    if service::start().unwrap_or(false) {
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if let Ok(status) = client
+                .call_as::<DaemonStatus>(method::DAEMON_STATUS, Value::Null)
+                .await
+            {
+                return Ok((true, status));
+            }
+        }
+        bail!(
+            "the Hostlane service did not come up within 5s; see {}",
+            log_path.display()
+        );
+    }
+
     if let Some(dir) = log_path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -918,12 +1032,7 @@ async fn daemon_start(client: &Client, socket: Option<PathBuf>, json: bool) -> R
             .call_as::<DaemonStatus>(method::DAEMON_STATUS, Value::Null)
             .await
         {
-            output_value(
-                json,
-                json!({ "started": true, "pid": status.pid }),
-                &format!("Hostlane daemon started (pid {}).", status.pid),
-            );
-            return Ok(());
+            return Ok((true, status));
         }
     }
     bail!(

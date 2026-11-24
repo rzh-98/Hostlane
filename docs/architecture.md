@@ -26,10 +26,15 @@ Hostlane/
 │  │     ├─ policy/                 策略：shell 词法（shell）、风险分级（classify）、规则匹配（rules）、审批队列（approvals）、急停和放行流程（mod）
 │  │     ├─ store.rs                SQLite：审计日志（只追加）、命令记录、文件修改记录、端口备注、保存的隧道、策略规则、主机标签和设置
 │  │     └─ events.rs               事件总线（broadcast）
-│  └─ hostlane-cli/              `hostlane` 二进制：CLI + `daemon` 子命令（之后加 `mcp`）
+│  └─ hostlane-cli/              `hostlane` 二进制
+│     └─ src/
+│        ├─ main.rs                 CLI 和 `daemon` 子命令
+│        ├─ mcp.rs                  `hostlane mcp`：stdio MCP Server（rmcp），工具到方法的映射
+│        └─ service.rs              `daemon install`：launchd / systemd --user 服务文件
 ├─ apps/desktop/                 Electron 桌面端（基于 Desktop-Starter）
 │  └─ src/
 │     ├─ main/daemon.ts          连接守护进程、按需拉起、保持事件订阅并转发给渲染进程
+│     ├─ main/setup.ts           把 CLI 链接到 ~/.local/bin、查看和注册后台服务（调用 hostlane --json daemon …）
 │     ├─ main/paths.ts           socket 路径规则（与 hostlane-core/src/paths.rs 保持一致）
 │     ├─ shared/ipc.ts           IPC 通道、渲染进程可调用的方法白名单
 │     ├─ shared/protocol/        由 ts-rs 生成，不要手改
@@ -43,7 +48,7 @@ Hostlane/
 
 ```text
 agent ──shell──► hostlane（CLI，每次调用一个进程）──┐
-agent ──stdio──► hostlane mcp（M6）─────────────────┤ 本地 socket
+agent ──stdio──► hostlane mcp（随 agent 启停）─────┤ 本地 socket
 Electron 主进程 ◄─IPC─ 渲染进程（沙箱）─────────────┤ JSON-RPC
                                                     ▼
                                      hostlane daemon run（常驻）
@@ -53,7 +58,10 @@ Electron 主进程 ◄─IPC─ 渲染进程（沙箱）────────
 - SSH 凭据只在守护进程中使用：先用 ssh-agent（`IdentityFile` 对应的密钥优先），再试未加密的私钥文件。带口令的私钥和密码登录暂不支持（H2），请先 `ssh-add`。
 - `hostlane daemon start` 会以独立进程组在后台启动 `hostlane daemon run`，日志写入 `<数据目录>/daemon.log`，等到 socket 能响应后才返回。
 - 桌面端启动时，如果守护进程没有运行，会调用 `hostlane daemon start`。关闭桌面端不会停止守护进程。
-- M6 会把守护进程注册为用户级服务（launchd、systemd --user 或登录启动项），由系统负责拉起。
+- `hostlane daemon install` 把守护进程注册为用户级服务：macOS 写入 `~/Library/LaunchAgents/com.hostlane.daemon.plist` 并 `launchctl bootstrap`（`RunAtLoad`，`KeepAlive` 只在非 0 退出时重启）；Linux 写入 `~/.config/systemd/user/hostlane.service` 并 `enable` + `restart`（`Restart=on-failure`）。服务文件记录当前二进制的绝对路径和当时设置的 `HOSTLANE_SOCKET`、`HOSTLANE_DATA_DIR`、`HOSTLANE_SSH_CONFIG`、`HOSTLANE_NOTIFY`。正在运行的守护进程会先被停止，再由服务接管。`--print` 只输出服务文件。
+- 服务已安装时，`hostlane daemon start`（以及桌面端和 MCP 的自动拉起）改为让服务管理器启动（`launchctl kickstart` / `systemctl --user start`），不会在服务之外再起一个守护进程。`hostlane daemon stop` 正常退出（退出码 0），服务不会把它重新拉起。
+- `hostlane daemon uninstall` 停止服务（守护进程随之退出）并删除服务文件；`hostlane daemon service` 查看是否安装以及服务运行的二进制。
+- 打包后的桌面端把 release 版 `hostlane` 放在 `Resources/bin/`（electron-builder 的 `extraResources`，`npm run build:cli` 构建）；`main/daemon.ts` 在打包时使用它，开发时使用 `target/debug/hostlane`，也可以用 `HOSTLANE_BIN` 指定。Windows 版暂不内置（守护进程需要 Unix socket）。
 
 ## 路径
 
@@ -98,7 +106,7 @@ socket 文件权限为 0600，所在目录权限为 0700。启动时如果发现
 {"jsonrpc":"2.0","id":1,"method":"exec.run","params":{…},"client":{"name":"claude-code","session":"a1b2"}}
 ```
 
-CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` 读取；桌面端固定为 `desktop`。
+CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` 读取；桌面端固定为 `desktop`。`hostlane mcp` 使用 `HOSTLANE_CLIENT`（默认 `mcp`，不接受 `cli` 和 `desktop`），会话取 `HOSTLANE_SESSION`，没有时用 MCP 客户端名加进程号（例如 `claude-code-4121`）。
 
 ### 事件订阅
 
@@ -276,7 +284,7 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 
 1. 在 `hostlane-protocol` 中定义参数和结果类型（加上 `#[derive(TS)] #[ts(export)]`），并把方法名加入 `method` 模块。
 2. 在 `hostlane-core/src/handlers.rs` 的 `run` 中实现。访问服务器的方法要加入 `method::GATED`，并在 `policy/mod.rs` 的 `subject` 中说明如何分级。
-3. 在 CLI 中加对应的子命令（支持 `--json`）。
+3. 在 CLI 中加对应的子命令（支持 `--json`）；agent 需要用到时，在 `hostlane-cli/src/mcp.rs` 的 `specs` 中加一个工具（只能由人执行的操作不要加）。
 4. 如果渲染进程需要调用，把方法名加入 `apps/desktop/src/shared/ipc.ts` 的 `RENDERER_METHODS`。
 5. 运行 `cargo test --workspace` 重新生成 TS 类型。
 
@@ -286,3 +294,13 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 - 不加 `--json` 时，输出给人看的文本，错误写到 stderr。
 - `DAEMON_NOT_RUNNING` 是 CLI 自己产生的错误，表示无法连接 socket。
 - `hostlane exec` 不加 `--json` 时，退出码等于远程命令的退出码，超时为 124，被急停终止为 130；加 `--json` 时只要命令开始执行就返回 0，结果看 `status` 和 `exit_code`。
+
+## MCP
+
+`hostlane mcp` 用 [rmcp](https://crates.io/crates/rmcp) 实现 stdio MCP Server，由 agent 启动，生命周期跟随 agent。它不持有任何状态，每次工具调用都通过 `hostlane_core::client::Client` 转发到守护进程，因此策略、审批、审计、急停与 CLI 完全一致。
+
+- **工具映射**：`mcp.rs` 中的 `specs` 是一张表，每个工具对应一个守护进程方法，并声明 JSON Schema。调用时只转发 schema 中声明的参数；受管控的方法（`method::GATED`）额外接受 `async`、`ticket_id` 和 `approval_timeout_secs`。`edit_file` 和 `apply_diff` 都映射到 `files.patch`，分别只暴露 `edits` 和 `diff`。`check_policy` 接受工具名和参数，先翻译成方法和参数再调用 `policy.check`。`hosts` 会顺带返回 `connections.list` 的结果。
+- **不开放的方法**：`approvals.resolve`、`policy.resume`、`policy.rules.*`、`hosts.trust`、`hosts.label`、`policy.stop`、`daemon.shutdown`，以及管理保存隧道的 `tunnels.start/update/delete`（agent 只开临时隧道，用 `close_tunnel` 关闭）。单元测试会检查只能由人执行的方法没有被暴露。
+- **结果**：成功时返回 `structuredContent`（守护进程的原始结果），`content` 是同一份 JSON 文本。失败时返回 `isError: true` 的工具结果，内容为 `{"error":{"kind","message","hint","details"}}`，和 CLI 的 `--json` 错误格式相同；未知工具名返回协议错误 `-32602`。
+- **审批**：默认阻塞等待（与 CLI 非交互模式相同）；`async: true` 时立即返回 `APPROVAL_REQUIRED` 和 `details.ticket_id`。MCP 客户端可能有自己的工具超时（例如 Codex 的 `tool_timeout_sec`），接入页的配置片段把它设为 600 秒。
+- **守护进程**：启动时和遇到 `DAEMON_NOT_RUNNING` 时会调用与 `hostlane daemon start` 相同的逻辑拉起守护进程（服务已安装时交给服务管理器），然后重试一次。stdout 只用于 MCP 协议，不输出日志。

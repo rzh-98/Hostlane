@@ -4,7 +4,7 @@
   <p>An SSH runtime for the agent you already use. Let Codex, Claude Code or your own agent run commands, edit files, open tunnels and manage web-service ports on remote servers — from your machine, with fingerprint checks, approvals and an audit trail.</p>
   <p>No built-in LLM. Nothing to install on the server: <code>sshd</code> is enough.</p>
   <p>
-    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M5)-orange" />
+    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M6)-orange" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -21,7 +21,7 @@
 </div>
 
 > [!WARNING]
-> Hostlane is in early development. M0–M5 work today: the daemon, CLI, `~/.ssh/config` import, a pooled SSH client with host key checks, `exec`, the session monitor, the audit log, file operations (read, list, search, hash-checked atomic edits, upload, download, revert) and ports (discovery, process/systemd/Docker mapping, HTTP/HTTPS probing with certificate expiry, notes, free-port lookup) and tunnels (local forwarding with conflict detection, saved tunnels restored on start, auto-reconnect, expiring agent tunnels) and policy (command risk levels, rules, blocking or async approvals with diffs, emergency stop). MCP and packaging arrive in M6. See the [roadmap](#roadmap).
+> Hostlane is in early development. M0–M6 work today: the daemon, CLI, `~/.ssh/config` import, a pooled SSH client with host key checks, `exec`, the session monitor, the audit log, file operations (read, list, search, hash-checked atomic edits, upload, download, revert) and ports (discovery, process/systemd/Docker mapping, HTTP/HTTPS probing with certificate expiry, notes, free-port lookup) and tunnels (local forwarding with conflict detection, saved tunnels restored on start, auto-reconnect, expiring agent tunnels) and policy (command risk levels, rules, blocking or async approvals with diffs, emergency stop), plus an MCP server, a login service (launchd or systemd) and a desktop app that bundles the binary. There are no signed releases yet. See the [roadmap](#roadmap).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -64,7 +64,7 @@ Electron UI ──IPC──► main process ──local socket──► hostlane
                                                     └─ audit log (SQLite)
 ```
 
-- `hostlane` is a single binary: the CLI, the daemon (`hostlane daemon …`) and, later, the MCP server (`hostlane mcp`).
+- `hostlane` is a single binary: the CLI, the daemon (`hostlane daemon …`) and the MCP server (`hostlane mcp`).
 - Clients talk to the daemon over newline-delimited JSON-RPC 2.0 on a per-user socket with `0600` permissions.
 - Errors carry a stable `kind` and a `hint` written for agents, so they can decide the next step without parsing prose.
 
@@ -72,7 +72,7 @@ Details: [architecture and protocol](docs/architecture.md) (Chinese).
 
 ## Quick start
 
-There are no prebuilt binaries yet; build from source.
+There are no prebuilt releases yet; build from source.
 
 **Requirements:** Rust 1.89+, Node.js 22.12+ and npm 10+.
 
@@ -90,10 +90,16 @@ cargo test --workspace
 ./target/debug/hostlane read <host> /etc/hostname
 ./target/debug/hostlane daemon stop
 
+# Optional: start the daemon at login and restart it if it crashes (launchd / systemd --user)
+./target/debug/hostlane daemon install
+
 # Desktop app (development mode uses target/debug/hostlane and starts the daemon if needed)
 cd apps/desktop
 npm install
 npm run dev
+
+# Package the app with a release build of hostlane in Resources/bin (unsigned)
+npm run pack        # or: npm run dist:mac / dist:linux
 ```
 
 ### CLI
@@ -135,21 +141,23 @@ Every command accepts `--json`. On success, the result goes to stdout; on failur
 | `hostlane label <host> [--env prod] [--tag T]… [--clear]`                          | Set a host's environment and tags, which rules and defaults use                               |
 | `hostlane policy status` / `add` / `delete` / `check <host> <cmd>`                 | Show or change rules, or see a command's risk and what the policy would do                    |
 | `hostlane call <method> '<params>'`                                                | Send a raw JSON-RPC call to the daemon                                                        |
+| `hostlane mcp`                                                                     | Serve the tools to an agent over MCP (stdio); starts the daemon if needed                     |
 | `hostlane daemon start` / `stop`                                                   | Start the daemon in the background, or ask it to exit                                         |
+| `hostlane daemon install [--print]` / `uninstall` / `service`                      | Register the daemon as a login service (launchd or `systemd --user`), remove it, or show it   |
 | `hostlane daemon run`                                                              | Run the daemon in the foreground                                                              |
 | `hostlane daemon socket-path`                                                      | Print the socket path clients use                                                             |
 
 ### Environment variables
 
-| Variable              | Effect                                                                              |
-| --------------------- | ----------------------------------------------------------------------------------- |
-| `HOSTLANE_SOCKET`     | Override the socket path                                                            |
-| `HOSTLANE_DATA_DIR`   | Override the data directory (logs, database)                                        |
-| `HOSTLANE_SSH_CONFIG` | Override the `ssh_config` path                                                      |
-| `HOSTLANE_BIN`        | The `hostlane` binary used by the desktop app                                       |
-| `HOSTLANE_CLIENT`     | Caller name for CLI calls (default `cli`), shown in the audit log and Sessions page |
-| `HOSTLANE_SESSION`    | Agent session ID; the Sessions page groups by it                                    |
-| `HOSTLANE_NOTIFY`     | `0` stops the daemon's own system notifications for approvals                       |
+| Variable              | Effect                                                                                |
+| --------------------- | ------------------------------------------------------------------------------------- |
+| `HOSTLANE_SOCKET`     | Override the socket path                                                              |
+| `HOSTLANE_DATA_DIR`   | Override the data directory (logs, database)                                          |
+| `HOSTLANE_SSH_CONFIG` | Override the `ssh_config` path                                                        |
+| `HOSTLANE_BIN`        | The `hostlane` binary used by the desktop app                                         |
+| `HOSTLANE_CLIENT`     | Caller name (default `cli`, or `mcp` for `hostlane mcp`), shown in audit and Sessions |
+| `HOSTLANE_SESSION`    | Agent session ID; the Sessions page groups by it                                      |
+| `HOSTLANE_NOTIFY`     | `0` stops the daemon's own system notifications for approvals                         |
 
 To try things without touching your real setup, point all of them at a temporary directory:
 
@@ -159,7 +167,56 @@ export HOSTLANE_SOCKET=/tmp/hl/hostlane.sock HOSTLANE_DATA_DIR=/tmp/hl HOSTLANE_
 
 ## Use it from your agent
 
-Until the MCP server lands in M6, agents use the CLI. Add this to your project's `AGENTS.md` or `CLAUDE.md`:
+### MCP
+
+`hostlane mcp` is a stdio MCP server. Point your agent at it; the Integrations page in the desktop app shows these snippets with the right path filled in. Use an absolute path if `hostlane` is not on the agent's `PATH` (the Integrations page can link it into `~/.local/bin`).
+
+**Codex** (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.hostlane]
+command = "hostlane"
+args = ["mcp"]
+# Calls that wait for approval block; leave them time
+tool_timeout_sec = 600
+```
+
+**Claude Code:**
+
+```bash
+claude mcp add --scope user hostlane -- hostlane mcp
+```
+
+**Cursor** (`~/.cursor/mcp.json` or `.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "hostlane": { "command": "hostlane", "args": ["mcp"] }
+  }
+}
+```
+
+The tools map one-to-one onto the CLI:
+
+| Tools                                                                                    | CLI equivalent                                           |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `hosts`                                                                                  | `hosts`, `connections`                                   |
+| `exec`, `read_output`, `exec_history`                                                    | `exec`, `output`, `history`                              |
+| `read_file`, `list_dir`, `search_files`                                                  | `read`, `ls`, `search`                                   |
+| `write_file`, `edit_file`, `apply_diff`, `upload_file`, `download_file`, `revert_change` | `write`, `edit`, `patch`, `upload`, `download`, `revert` |
+| `list_ports`, `inspect_port`, `check_port`, `find_free_port`, `annotate_port`            | `ports`, `port`, `port-check`, `free-port`, `port-note`  |
+| `list_tunnels`, `open_tunnel`, `close_tunnel`                                            | `tunnels`, `tunnel open`, `tunnel close`                 |
+| `check_policy`, `get_approval`                                                           | `policy check`, `approval`                               |
+
+- Policy, approvals and the audit log apply exactly as for the CLI. A call that needs approval waits (up to `approval_timeout_secs`, default 120); with `async: true` it returns `APPROVAL_REQUIRED` and a `ticket_id` at once, and the agent repeats the call with `ticket_id` once you approve.
+- Errors come back as tool errors with `{"error": {"kind", "message", "hint", "details"}}`.
+- What only a person may do is not exposed: approving, rules, trusting host keys, labels and resuming after an emergency stop.
+- Calls are recorded as client `mcp` (or `HOSTLANE_CLIENT`), with one session per server process named after the MCP client, e.g. `codex-mcp-client-4121`.
+
+### Through the CLI
+
+Agents that only run shell commands use the CLI. Add this to your project's `AGENTS.md` or `CLAUDE.md`:
 
 ```markdown
 ## Remote servers
@@ -182,7 +239,7 @@ Operate servers through the `hostlane` CLI; do not run ssh directly.
 - Set `HOSTLANE_CLIENT=<agent name>` and `HOSTLANE_SESSION=<session id>` so the audit log and Sessions page can tell callers apart.
 ```
 
-The desktop app's Integrations page has the same snippet with a copy button. In M6 it will also provide ready-made MCP config for Codex, Claude Code and Cursor.
+The desktop app's Integrations page has the same snippet with a copy button.
 
 ## Roadmap
 
@@ -194,7 +251,7 @@ The desktop app's Integrations page has the same snippet with a copy button. In 
 | **M3** Ports              | Port discovery, process mapping, HTTP probing, port notes, free-port lookup                  | ✅ Done |
 | **M4** Tunnels            | Local forwarding, saved tunnels, auto-reconnect, conflict detection, temporary agent tunnels | ✅ Done |
 | **M5** Policy             | Risk levels, rules, blocking approvals, global stop                                          | ✅ Done |
-| **M6** MCP & distribution | `hostlane mcp`, Integrations page, user-level service registration, bundled binary           | Next    |
+| **M6** MCP & distribution | `hostlane mcp`, Integrations page, user-level service registration, bundled binary           | ✅ Done |
 
 The full requirement list, with IDs and priorities, is in [docs/requirements.md](docs/requirements.md) (Chinese).
 
@@ -205,10 +262,11 @@ The full requirement list, with IDs and priorities, is in [docs/requirements.md]
 ├─ crates/
 │  ├─ hostlane-protocol/       Wire types: JSON-RPC frames, error codes, method params and results
 │  ├─ hostlane-core/           Daemon: socket server, SSH pool, exec, files (SFTP), ports, tunnels, policy and approvals, audit (SQLite), client
-│  └─ hostlane-cli/            The `hostlane` binary: CLI + `daemon` subcommands
+│  └─ hostlane-cli/            The `hostlane` binary: CLI, MCP server (`mcp`), `daemon` subcommands and service registration
 ├─ apps/desktop/               Electron app, based on Desktop-Starter
 │  └─ src/
 │     ├─ main/daemon.ts        Connects to the daemon, starts it on demand, forwards events
+│     ├─ main/setup.ts         Links the CLI into ~/.local/bin, registers the login service
 │     ├─ shared/protocol/      TypeScript types generated from hostlane-protocol (do not edit)
 │     └─ renderer/src/pages/   Hosts, Ports, Tunnels, Sessions, Approvals, Audit, Integrations, Settings
 └─ docs/                       Requirements, architecture, screenshots

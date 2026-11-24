@@ -1,7 +1,9 @@
 import { useState } from 'react'
-import { Check, Copy } from 'lucide-react'
+import { Check, CircleAlert, CircleCheck, Copy, RefreshCw } from 'lucide-react'
+import { refreshSetup, runSetup, useSetup } from '@/app/setup'
 import { Page, PageContent, Toolbar } from '@/layout'
-import { Badge, IconButton, Section } from '@/ui'
+import { Badge, Button, FormRow, IconButton, Notice, Section, SegmentedControl } from '@/ui'
+import { mcpSnippet, type McpClient } from './snippets'
 
 const cliCommands: [command: string, description: string][] = [
   ['hostlane --json hosts', '列出可用主机'],
@@ -36,8 +38,23 @@ const cliCommands: [command: string, description: string][] = [
   ['hostlane stop', '急停：拒绝所有 agent 调用并关闭 agent 隧道（hostlane resume 恢复）'],
   ['hostlane watch', '在终端里实时查看所有命令和输出'],
   ["hostlane --json call <method> '<params>'", '直接调用任意 JSON-RPC 方法'],
-  ['hostlane daemon start', '在后台启动守护进程']
+  ['hostlane mcp', '以 stdio 方式运行 MCP Server（由 agent 启动）'],
+  ['hostlane daemon start', '在后台启动守护进程'],
+  ['hostlane daemon install', '把守护进程注册为登录时启动的用户级服务']
 ]
+
+const mcpClients: { value: McpClient; label: string }[] = [
+  { value: 'codex', label: 'Codex' },
+  { value: 'claude', label: 'Claude Code' },
+  { value: 'cursor', label: 'Cursor' }
+]
+
+const pathExport = 'export PATH="$HOME/.local/bin:$PATH"'
+
+interface PageNotice {
+  tone: 'success' | 'danger'
+  text: string
+}
 
 const agentsSnippet = `## 远程服务器
 通过 \`hostlane\` CLI 操作服务器，不要直接运行 ssh。
@@ -57,10 +74,103 @@ const agentsSnippet = `## 远程服务器
 - 设置 \`HOSTLANE_CLIENT=<agent 名称>\` 和 \`HOSTLANE_SESSION=<会话 ID>\`，审计和会话页会按它们区分来源。`
 
 export function IntegrationsPage() {
+  const { status, busy } = useSetup()
+  const [client, setClient] = useState<McpClient>('codex')
+  const [notice, setNotice] = useState<PageNotice | null>(null)
+  const snippet = status ? mcpSnippet(client, status.command, status.env) : null
+  const cli = status?.cli
+
+  const link = async () => {
+    const error = await runSetup('linkCli')
+    setNotice(
+      error
+        ? { tone: 'danger', text: `安装失败：${error.message}` }
+        : { tone: 'success', text: '已把 hostlane 安装到 ~/.local/bin。' }
+    )
+  }
+
   return (
     <Page>
       <Toolbar title="接入" />
+      {notice && (
+        <Notice
+          tone={notice.tone}
+          icon={notice.tone === 'success' ? <CircleCheck /> : <CircleAlert />}
+          onDismiss={() => setNotice(null)}
+        >
+          {notice.text}
+        </Notice>
+      )}
       <PageContent width="narrow">
+        <Section
+          title="MCP"
+          description="agent 会启动 hostlane mcp，通过 stdio 使用与 CLI 一一对应的工具：主机、命令、文件、端口、隧道和审批查询。守护进程没运行时会自动启动。"
+          actions={snippet && <CopyButton text={snippet.text} />}
+        >
+          <div className="flex flex-col gap-3">
+            <SegmentedControl<McpClient>
+              aria-label="客户端"
+              value={client}
+              onValueChange={setClient}
+              options={mcpClients}
+            />
+            {snippet ? (
+              <>
+                <span className="text-sm text-fg-muted">{snippet.where}</span>
+                <pre className="selectable overflow-x-auto rounded-md border border-border bg-bg-subtle p-3 font-mono text-sm text-fg-muted">
+                  {snippet.text}
+                </pre>
+                {status && !status.binaryExists && (
+                  <span className="text-sm text-danger-text">
+                    找不到 {status.binary}，开发时先在仓库根目录运行 cargo build。
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="text-sm text-fg-muted">正在读取 hostlane 的位置…</span>
+            )}
+          </div>
+        </Section>
+
+        <Section
+          title="命令行"
+          description="把 hostlane 链接到 ~/.local/bin，终端和 agent 就能直接运行它；配置片段也会改用这个路径。"
+          divided
+        >
+          <FormRow label="安装到 PATH" description={cli ? cli.linkPath : undefined}>
+            {!cli ? null : !cli.supported ? (
+              <span className="text-sm text-fg-muted">当前系统暂不支持</span>
+            ) : cli.linked ? (
+              <span className="flex items-center gap-2">
+                <Badge tone="success">已安装</Badge>
+                <IconButton label="刷新" icon={<RefreshCw />} onClick={() => void refreshSetup()} />
+              </span>
+            ) : (
+              <Button variant="primary" disabled={busy} onClick={() => void link()}>
+                {cli.linkTarget ? '更新链接' : '安装'}
+              </Button>
+            )}
+          </FormRow>
+          {cli?.linkTarget && !cli.linked && (
+            <FormRow label="当前指向">
+              <span className="selectable font-mono text-sm break-all text-fg-muted">
+                {cli.linkTarget}
+              </span>
+            </FormRow>
+          )}
+          {cli?.linked && !cli.dirOnPath && (
+            <FormRow
+              label="加入 PATH"
+              description="~/.local/bin 不在 shell 的 PATH 中，把这行加到 ~/.zshrc 或 ~/.bashrc。"
+            >
+              <span className="flex items-center gap-2">
+                <code className="selectable font-mono text-sm text-fg">{pathExport}</code>
+                <CopyButton text={pathExport} />
+              </span>
+            </FormRow>
+          )}
+        </Section>
+
         <Section
           title="CLI"
           description="任何能执行 shell 命令的 agent 都可以直接使用。加上 --json 后，输出和错误都是结构化数据。"
@@ -79,22 +189,13 @@ export function IntegrationsPage() {
 
         <Section
           title="写进 AGENTS.md"
-          description="把这段说明放进 agent 的项目指令，让它通过 Hostlane 操作服务器。"
+          description="不用 MCP、让 agent 通过 CLI 操作时，把这段说明放进 agent 的项目指令。"
           actions={<CopyButton text={agentsSnippet} />}
         >
           <pre className="selectable overflow-x-auto rounded-md border border-border bg-bg-subtle p-3 font-mono text-sm whitespace-pre-wrap text-fg-muted">
             {agentsSnippet}
           </pre>
         </Section>
-
-        <Section
-          title={
-            <span className="inline-flex items-center gap-2">
-              MCP <Badge>M6</Badge>
-            </span>
-          }
-          description="hostlane mcp 会以 stdio 方式提供与 CLI 一一对应的工具，届时这里会给出 Codex、Claude Code 和 Cursor 的配置片段。"
-        />
       </PageContent>
     </Page>
   )

@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { CircleCheck, Monitor, Moon, RefreshCw, Sun } from 'lucide-react'
+import { CircleAlert, CircleCheck, Monitor, Moon, RefreshCw, Sun } from 'lucide-react'
 import { APP_NAME, APP_VERSION } from '@/app/config'
 import { daemonStore, refreshDaemon, startDaemon } from '@/app/daemon'
+import { runSetup, useSetup } from '@/app/setup'
 import { Page, PageContent, Toolbar } from '@/layout'
 import {
   resetAppearance,
@@ -11,6 +12,7 @@ import {
   type ThemePreference
 } from '@/theme/appearance'
 import {
+  Badge,
   Button,
   ConfirmDialog,
   FormRow,
@@ -31,19 +33,54 @@ function formatUptime(ms: number): string {
   return `${Math.floor(hours / 24)} 天 ${hours % 24} 小时`
 }
 
+const managerLabels = { launchd: 'launchd', systemd: 'systemd --user' } as const
+
+interface SettingsNotice {
+  tone: 'success' | 'danger'
+  text: string
+}
+
 export function SettingsPage() {
   const appearance = useAppearance()
   const daemon = daemonStore.use()
+  const setup = useSetup()
   const [confirmReset, setConfirmReset] = useState(false)
-  const [resetDone, setResetDone] = useState(false)
+  const [confirmUninstall, setConfirmUninstall] = useState(false)
+  const [notice, setNotice] = useState<SettingsNotice | null>(null)
   const status = daemon.status
+  const service = setup.status?.service ?? null
+  const outdated =
+    service?.installed && service.binary !== null && service.binary !== setup.status?.binary
+
+  const changeService = async (action: 'installService' | 'uninstallService') => {
+    const error = await runSetup(action)
+    await refreshDaemon()
+    if (error) {
+      setNotice({
+        tone: 'danger',
+        text: [error.message, error.hint].filter(Boolean).join('。')
+      })
+    } else {
+      setNotice({
+        tone: 'success',
+        text:
+          action === 'installService'
+            ? '已注册后台服务，守护进程会在登录时启动，崩溃后自动重启。'
+            : '已取消注册后台服务，守护进程已停止；点击“启动”或 agent 下次调用 MCP 时会再次启动。'
+      })
+    }
+  }
 
   return (
     <Page>
       <Toolbar title="设置" />
-      {resetDone && (
-        <Notice tone="success" icon={<CircleCheck />} onDismiss={() => setResetDone(false)}>
-          已恢复默认外观。
+      {notice && (
+        <Notice
+          tone={notice.tone}
+          icon={notice.tone === 'success' ? <CircleCheck /> : <CircleAlert />}
+          onDismiss={() => setNotice(null)}
+        >
+          {notice.text}
         </Notice>
       )}
       <PageContent width="narrow">
@@ -80,6 +117,46 @@ export function SettingsPage() {
               <span className="selectable text-sm text-danger-text">
                 {[daemon.error.message, daemon.error.hint].filter(Boolean).join('。')}
               </span>
+            </FormRow>
+          )}
+          {service?.supported && (
+            <FormRow
+              label="后台服务"
+              description={
+                outdated
+                  ? `服务运行的是 ${service.binary}，与当前程序不同。`
+                  : service.manager
+                    ? `用 ${managerLabels[service.manager]} 在登录时启动守护进程，崩溃后自动重启。`
+                    : undefined
+              }
+            >
+              {service.installed ? (
+                <span className="flex items-center gap-2">
+                  <Badge tone={outdated ? 'warning' : 'success'}>已注册</Badge>
+                  {outdated && (
+                    <Button
+                      disabled={setup.busy}
+                      onClick={() => void changeService('installService')}
+                    >
+                      更新
+                    </Button>
+                  )}
+                  <Button
+                    className="text-danger-text"
+                    disabled={setup.busy}
+                    onClick={() => setConfirmUninstall(true)}
+                  >
+                    取消注册…
+                  </Button>
+                </span>
+              ) : (
+                <Button
+                  disabled={setup.busy || !setup.status?.binaryExists}
+                  onClick={() => void changeService('installService')}
+                >
+                  {setup.busy ? '注册中…' : '注册'}
+                </Button>
+              )}
             </FormRow>
           )}
           {status && (
@@ -154,8 +231,17 @@ export function SettingsPage() {
         danger
         onConfirm={() => {
           resetAppearance()
-          setResetDone(true)
+          setNotice({ tone: 'success', text: '已恢复默认外观。' })
         }}
+      />
+      <ConfirmDialog
+        open={confirmUninstall}
+        onOpenChange={setConfirmUninstall}
+        title="取消注册后台服务？"
+        description="守护进程会立即停止：正在运行的命令会中断，隧道会关闭。之后登录时不再自动启动。"
+        confirmLabel="取消注册"
+        danger
+        onConfirm={() => void changeService('uninstallService')}
       />
     </Page>
   )

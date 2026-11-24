@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron'
 import { IpcChannel, RENDERER_METHODS, type ThemeSource } from '../shared/ipc'
 import { handlePolicyEvent } from './approvals'
 import { callDaemon, ensureDaemon, startDaemon, subscribeEvents } from './daemon'
+import { installService, linkCli, setupStatus, uninstallService } from './setup'
 import { createMainWindow, trafficLightPosition, windowBackground } from './window'
 
 const THEME_SOURCES: ThemeSource[] = ['system', 'light', 'dark']
@@ -31,6 +32,10 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IpcChannel.hostlaneStartDaemon, () => startDaemon())
+  ipcMain.handle(IpcChannel.setupStatus, () => setupStatus())
+  ipcMain.handle(IpcChannel.setupLinkCli, () => linkCli())
+  ipcMain.handle(IpcChannel.setupInstallService, () => installService())
+  ipcMain.handle(IpcChannel.setupUninstallService, () => uninstallService())
 
   nativeTheme.on('updated', () => {
     for (const win of BrowserWindow.getAllWindows()) win.setBackgroundColor(windowBackground())
