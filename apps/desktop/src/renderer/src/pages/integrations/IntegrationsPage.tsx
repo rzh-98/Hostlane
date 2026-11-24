@@ -66,6 +66,7 @@ const agentsSnippet = `## 远程服务器
 - 每次修改都会返回 change_id，用 \`hostlane revert <change_id>\` 撤销。
 - 部署服务前用 \`hostlane --json free-port <host>\` 或 \`port-check <host> <port>\` 选端口，不要猜；\`hostlane --json ports <host>\` 列出端口对应的进程、容器和 HTTP 状态，\`port <host> <port>\` 查看单个端口。
 - 用 \`hostlane port-note <host> <port> --name … --project …\` 记录新部署服务占用的端口。
+- 查看服务日志用 \`hostlane --json logs <host> <unit>\`（容器加 \`--docker\`）；重启服务用 \`hostlane --json service restart <host> <unit>\`，不要直接运行 systemctl 或 docker 命令。
 - 需要在本机访问服务器上的服务时，用 \`hostlane --json tunnel open <host> <port>\` 建立隧道，使用返回的 \`tunnel.url\`；用完后 \`hostlane tunnel close <id>\`，会话结束时运行 \`hostlane tunnel close --session <会话 ID>\`。不要绑定 0.0.0.0，除非用户明确要求。
 - 命令都加 \`--json\`；失败时读取 error.kind 和 error.hint 决定下一步。
 - 遇到 HOST_KEY_UNKNOWN 或 HOST_KEY_CHANGED 时停下来告诉用户，不要自行信任主机密钥。

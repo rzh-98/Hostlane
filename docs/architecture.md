@@ -12,8 +12,11 @@ Hostlane/
 │  │  └─ src/
 │  │     ├─ server.rs / client.rs   socket 服务端和客户端（含事件订阅）
 │  │     ├─ handlers.rs             方法分发；受管控的方法在这里经过策略检查并写审计日志
-│  │     ├─ state.rs                守护进程状态（`Daemon`）、主机解析
+│  │     ├─ state.rs                守护进程状态（`Daemon`）
+│  │     ├─ catalog.rs              主机目录：合并 ~/.ssh/config、手动添加的主机和本机标签，按名称解析主机
 │  │     ├─ ssh_config.rs           解析 ~/.ssh/config
+│  │     ├─ hosts.rs                hosts.add/update/remove、secrets.*：校验、保存、删除时清理隧道和密码
+│  │     ├─ secrets.rs              密码和口令的存取：系统钥匙串（keyring），测试时可用文件
 │  │     ├─ known_hosts.rs          解析和写入 known_hosts、计算指纹
 │  │     ├─ ssh.rs                  russh 客户端：指纹校验、认证
 │  │     ├─ pool.rs                 连接池：每台主机一条连接、ProxyJump、保活和空闲回收
@@ -22,14 +25,16 @@ Hostlane/
 │  │     ├─ patch.rs                文本修改（精确替换、unified diff）和 diff 摘要
 │  │     ├─ ports/                  ports.*：端口发现（discover）、HTTP/HTTPS 探测（probe）、证书解析（cert）
 │  │     ├─ tunnels.rs              tunnels.*：本地转发、冲突检测、断线重连、临时隧道到期关闭
+│  │     ├─ services.rs             services.* / processes.kill：从参数生成 journalctl、systemctl、docker、kill 命令并执行
 │  │     ├─ remote.rs               Hostlane 自己运行的辅助命令（搜索、mv 兜底、端口扫描）
 │  │     ├─ policy/                 策略：shell 词法（shell）、风险分级（classify）、规则匹配（rules）、审批队列（approvals）、急停和放行流程（mod）
-│  │     ├─ store.rs                SQLite：审计日志（只追加）、命令记录、文件修改记录、端口备注、保存的隧道、策略规则、主机标签和设置
+│  │     ├─ store.rs                SQLite：审计日志（只追加）、命令记录、文件修改记录、端口备注、保存的隧道、策略规则、主机标签、手动添加的主机、凭据清单和设置
 │  │     └─ events.rs               事件总线（broadcast）
 │  └─ hostlane-cli/              `hostlane` 二进制
 │     └─ src/
 │        ├─ main.rs                 CLI 和 `daemon` 子命令
 │        ├─ mcp.rs                  `hostlane mcp`：stdio MCP Server（rmcp），工具到方法的映射
+│        ├─ manage.rs               `host`、`secret(s)`、`logs`、`service`、`kill`
 │        └─ service.rs              `daemon install`：launchd / systemd --user 服务文件
 ├─ apps/desktop/                 Electron 桌面端（基于 Desktop-Starter）
 │  └─ src/
@@ -60,7 +65,12 @@ Electron 主进程 ◄─IPC─ 渲染进程（沙箱）────────
 ```
 
 - 守护进程是唯一持有 SSH 连接、隧道和审批队列的进程。审批队列只在内存中，守护进程重启后清空。每台主机复用一条 SSH 连接，每条连接最多同时打开 8 个 channel；空闲 10 分钟后断开，每 30 秒 ping 一次以测量延迟和发现断线。
-- SSH 凭据只在守护进程中使用：先用 ssh-agent（`IdentityFile` 对应的密钥优先），再试未加密的私钥文件。带口令的私钥和密码登录暂不支持（H2），请先 `ssh-add`。
+- SSH 凭据只在守护进程中使用，认证顺序：
+  1. ssh-agent（`IdentityFile` 对应的密钥优先）。
+  2. 私钥文件。加密的私钥用钥匙串中保存的口令解开；没有保存口令时跳过。
+  3. 已保存的登录密码：先试 `password`，再试 `keyboard-interactive`（每个提示都回答这个密码）。
+- 全部失败时返回 `AUTH_FAILED`，`details`（`AuthFailure`）列出服务器还接受的认证方式、缺少口令的密钥、试过的密钥数量和是否保存了密码，`hint` 给出对应的 `hostlane secret set` 命令。
+- 密码和口令保存在系统钥匙串中（macOS 钥匙串、Linux Secret Service、Windows 凭据管理器），服务名为 `Hostlane`，账户名为 `password/<主机>` 或 `passphrase/<密钥的绝对路径>`；同一个密钥的口令由所有使用它的主机共用。SQLite 的 `secrets` 表只记录保存了哪些凭据和保存时间。凭据不会出现在任何方法的结果、审计日志和守护进程日志中：`secrets.set` 的 `secret` 在审计中记为 `<redacted>`，守护进程用完即清零（`zeroize`）。桌面端把输入框中的密码直接通过 IPC 发给守护进程，渲染进程不保存。`HOSTLANE_SECRET_STORE=file` 改用 `<数据目录>/secrets.json`（权限 0600，明文），只供测试使用。
 - `hostlane daemon start` 会以独立进程组在后台启动 `hostlane daemon run`，日志写入 `<数据目录>/daemon.log`，等到 socket 能响应后才返回。
 - 桌面端启动时，如果守护进程没有运行，会调用 `hostlane daemon start`。关闭桌面端不会停止守护进程。
 - `hostlane daemon install` 把守护进程注册为用户级服务：macOS 写入 `~/Library/LaunchAgents/com.hostlane.daemon.plist` 并 `launchctl bootstrap`（`RunAtLoad`，`KeepAlive` 只在非 0 退出时重启）；Linux 写入 `~/.config/systemd/user/hostlane.service` 并 `enable` + `restart`（`Restart=on-failure`）。服务文件记录当前二进制的绝对路径和当时设置的 `HOSTLANE_SOCKET`、`HOSTLANE_DATA_DIR`、`HOSTLANE_SSH_CONFIG`、`HOSTLANE_NOTIFY`。正在运行的守护进程会先被停止，再由服务接管。`--print` 只输出服务文件。
@@ -78,13 +88,14 @@ Electron 主进程 ◄─IPC─ 渲染进程（沙箱）────────
 
 数据目录中的文件：
 
-| 文件                                         | 内容                                                                                                                                                                                                        |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hostlane.db`                                | SQLite（WAL）：`calls` 表是审计日志，由触发器禁止 UPDATE 和 DELETE；`execs` 表是会话监视器使用的命令记录；`file_changes` 表记录每次文件修改及其 diff；`port_notes` 表保存端口备注；`tunnels` 表保存隧道配置 |
-| `backups/<change_id>`                        | 文件被修改、上传覆盖或删除前的内容，权限 0600，保留 30 天，供 `files.revert` 使用                                                                                                                           |
-| `outputs/<id>.stdout`、`outputs/<id>.stderr` | 命令的完整输出，权限 0600；每个流最多保存 64 MiB，保留 30 天                                                                                                                                                |
-| `known_hosts`                                | Hostlane 信任的主机密钥。Hostlane 也会读取 ssh_config 同目录下的 `known_hosts`（或 `UserKnownHostsFile`），但只写这个文件                                                                                   |
-| `daemon.log`                                 | `hostlane daemon start` 启动时的日志                                                                                                                                                                        |
+| 文件                                         | 内容                                                                                                                                                                                                                                                                                             |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `hostlane.db`                                | SQLite（WAL）：`calls` 表是审计日志，由触发器禁止 UPDATE 和 DELETE；`execs` 表是会话监视器使用的命令记录；`file_changes` 表记录每次文件修改及其 diff；`port_notes` 表保存端口备注；`tunnels` 表保存隧道配置；`manual_hosts` 表保存手动添加的主机；`secrets` 表是已保存凭据的清单（不含凭据本身） |
+| `backups/<change_id>`                        | 文件被修改、上传覆盖或删除前的内容，权限 0600，保留 30 天，供 `files.revert` 使用                                                                                                                                                                                                                |
+| `outputs/<id>.stdout`、`outputs/<id>.stderr` | 命令的完整输出，权限 0600；每个流最多保存 64 MiB，保留 30 天                                                                                                                                                                                                                                     |
+| `known_hosts`                                | Hostlane 信任的主机密钥。Hostlane 也会读取 ssh_config 同目录下的 `known_hosts`（或 `UserKnownHostsFile`），但只写这个文件                                                                                                                                                                        |
+| `daemon.log`                                 | `hostlane daemon start` 启动时的日志                                                                                                                                                                                                                                                             |
+| `secrets.json`                               | 只在 `HOSTLANE_SECRET_STORE=file` 时使用（测试），权限 0600                                                                                                                                                                                                                                      |
 
 socket 文件权限为 0600，所在目录权限为 0700。启动时如果发现残留的 socket 文件，会先尝试连接：能连上说明已有守护进程在运行，此时拒绝启动；连不上则删除残留文件。
 
@@ -134,6 +145,12 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 | `hosts.disconnect`    | `HostParams`            | `{"disconnected":bool}`        | ✓    |
 | `hosts.trust`         | `TrustParams`           | `TrustResult`                  | ✓    |
 | `hosts.label`         | `HostLabelParams`       | `Host`                         | ✓    |
+| `hosts.add`           | `HostAddParams`         | `Host`                         | ✓    |
+| `hosts.update`        | `HostAddParams`         | `Host`                         | ✓    |
+| `hosts.remove`        | `HostParams`            | `HostRemoved`                  | ✓    |
+| `secrets.list`        | 无                      | `SecretsList`                  |      |
+| `secrets.set`         | `SecretSetParams`       | `SecretChanged`                | ✓    |
+| `secrets.delete`      | `SecretDeleteParams`    | `SecretChanged`                | ✓    |
 | `connections.list`    | 无                      | `ConnectionsList`              |      |
 | `exec.run`            | `ExecParams`            | `ExecResult`                   | ✓    |
 | `exec.list`           | `ExecListParams`        | `ExecList`                     |      |
@@ -158,6 +175,11 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 | `tunnels.start`       | `TunnelParams`          | `TunnelOpened`                 | ✓    |
 | `tunnels.update`      | `TunnelUpdateParams`    | `TunnelOpened`                 | ✓    |
 | `tunnels.delete`      | `TunnelParams`          | `TunnelsClosed`                | ✓    |
+| `services.logs`       | `ServiceLogsParams`     | `ServiceCommandResult`         | ✓    |
+| `services.start`      | `ServiceControlParams`  | `ServiceCommandResult`         | ✓    |
+| `services.stop`       | `ServiceControlParams`  | `ServiceCommandResult`         | ✓    |
+| `services.restart`    | `ServiceControlParams`  | `ServiceCommandResult`         | ✓    |
+| `processes.kill`      | `ProcessKillParams`     | `ServiceCommandResult`         | ✓    |
 | `audit.list`          | `AuditListParams`       | `AuditList`                    |      |
 | `approvals.list`      | `ApprovalsListParams`   | `ApprovalsList`                |      |
 | `approvals.get`       | `IdParams`              | `Approval`                     |      |
@@ -171,7 +193,7 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 | `policy.rules.delete` | `IdParams`              | `{"deleted":id}`               | ✓    |
 | `events.subscribe`    | 无                      | `Subscribed`，之后推送 `Event` |      |
 
-审计列打勾的方法中，访问服务器的那些（`method::GATED`：`hosts.connect` 到 `tunnels.delete`）还要先经过策略检查，见[策略与审批](#策略与审批)。
+审计列打勾的方法中，访问服务器的那些（`method::GATED`：`hosts.connect` 到 `processes.kill`，不含主机和凭据管理）还要先经过策略检查，见[策略与审批](#策略与审批)。
 
 `exec.run` 的要点：
 
@@ -219,6 +241,23 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 - 备注（`ports.annotate`）保存在本机的 `port_notes` 表中，不会写到服务器上。有备注但没有在监听的端口也会出现在列表中（`listening: false`）。`ports.find_free` 和 `ports.check` 的建议端口会跳过正在监听、Docker 已发布和有备注的端口。
 - 审计日志中，端口列表只记录条数。
 
+主机和凭据（`hosts.add/update/remove`、`secrets.*`）的要点：
+
+- 手动添加的主机保存在 `manual_hosts` 表中，`source` 为 `manual`。`~/.ssh/config` 中的 `Host *` 等通配块同样作用于它们；与 `Host` 块重名时以 `~/.ssh/config` 为准，`hosts.list` 的 `warnings` 中会说明。`hosts.list` 的 `manual` 字段返回手动主机保存时的原始设置，供编辑使用。
+- 校验：名称只能包含字母、数字、`.`、`_`、`-`；`hostname` 不能以 `-` 开头、不能含空白；端口不能为 0；指定的密钥文件必须存在。指定 `identity_file` 时只使用这个密钥（等同于 `IdentitiesOnly yes`）。
+- `hosts.update` 是整体替换，并断开这台主机现有的连接。`hosts.remove` 同时删除这台主机的保存隧道和登录密码，`hosts.update` / `remove` 不接受来自 `~/.ssh/config` 的主机。
+- `secrets.set` 保存口令前会先用它解开密钥，口令错误或密钥没有加密时返回 `INVALID_PARAMS`。不传 `key_path` 时，使用这台主机第一个加密的密钥。
+- `hosts.add/update/remove` 和 `secrets.set/delete` 只接受 `desktop` 或 `cli` 调用方，不经过策略检查，但会写入审计日志。
+
+服务和进程（`services.*`、`processes.kill`）的要点：
+
+- 守护进程根据参数生成命令，不接受任意 shell：
+  - `services.logs`：systemd 单元用 `journalctl [--user] -u <name> -n <lines> --no-pager -o short-iso [--since -10min]`，容器用 `docker logs --tail <lines> --timestamps [--since 10m] <name> 2>&1`。默认 200 行，最多 10000 行。
+  - `services.start/stop/restart`：`systemctl [--user] <action> <name>` 或 `docker <action> <name>`。SSH 用户不是 root 时，系统单元默认加 `sudo -n`（不会输入密码），可以用 `sudo: false` 关闭。
+  - `processes.kill`：`kill -<SIGNAL> <pid>`，pid 必须大于 1，信号只能是 TERM、INT、HUP、KILL、QUIT、USR1、USR2。
+- 名称只允许 `[A-Za-z0-9@._:-]` 且不以 `-` 开头，`since` 只接受 `30s`、`10m`、`2h`、`1d` 这样的值。参数不合法时，在策略检查之前就返回 `INVALID_PARAMS`。
+- 策略按生成的命令分级（与 `exec.run` 相同），审批界面显示的也是这条命令。命令通过 `exec.run` 的同一条路径执行，会出现在会话监视器中，结果包含 `command`、`ExecResult` 的全部字段，以及识别出的失败原因 `hint`（sudo 需要密码、无权访问 Docker 或 journal 等）。
+
 隧道（`tunnels.*`）的要点：
 
 - 只支持本地转发（`ssh -L`）：守护进程在本机监听，每个进来的连接通过主机连接池中的 SSH 连接打开一个 `direct-tcpip` 通道，转发到 `remote_host:remote_port`（默认 `127.0.0.1`，即服务器本机）。转发通道不占用每条连接 8 个 channel 的配额。运行中的隧道会一直持有这条 SSH 连接，所以连接池不会把它当作空闲连接关闭。
@@ -253,7 +292,7 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 其他约定：
 
 - 放行的调用在审计日志中记录 `risk` 和 `approver`（`desktop`、`cli`、`rule <id>` 或 `session grant`），被放行的命令在 `ExecRecord.approver` 中也有记录。
-- `approvals.resolve`、`policy.resume`、`policy.rules.add` / `delete` 和 `hosts.label` 只接受 `desktop` 或 `cli` 调用方。这只能防止 agent 误操作：调用方名称由客户端自己声明，不是安全边界。`policy.stop` 任何调用方都可以使用。
+- `approvals.resolve`、`policy.resume`、`policy.rules.add` / `delete`、`hosts.label`、`hosts.add/update/remove` 和 `secrets.set/delete` 只接受 `desktop` 或 `cli` 调用方。这只能防止 agent 误操作：调用方名称由客户端自己声明，不是安全边界。`policy.stop` 任何调用方都可以使用。
 - `policy.stop` 拒绝所有待审批调用，关闭 agent 创建的隧道（桌面端创建的、已保存但未运行的隧道不受影响），终止 agent 正在运行的命令。急停状态保存在 `settings` 表中，守护进程重启后仍然有效，此时也不会恢复 agent 创建的保存隧道。
 - 主机的环境和标签来自 `~/.ssh/config` 中 `Host` 块内的注释 `# hostlane: env=prod tags=web,eu`，也可以用 `hosts.label` 在本机覆盖（保存在 `host_labels` 表中）。
 - `policy.check` 返回某个调用的风险和决定，不执行也不创建审批。
@@ -298,14 +337,15 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 - 所有命令都支持 `--json`。成功时 stdout 输出结果；失败时退出码为 1，stdout 输出 `{"error":{"kind","message","hint"}}`。
 - 不加 `--json` 时，输出给人看的文本，错误写到 stderr。
 - `DAEMON_NOT_RUNNING` 是 CLI 自己产生的错误，表示无法连接 socket。
-- `hostlane exec` 不加 `--json` 时，退出码等于远程命令的退出码，超时为 124，被急停终止为 130；加 `--json` 时只要命令开始执行就返回 0，结果看 `status` 和 `exit_code`。
+- `hostlane secret set` 从终端（不回显）或 `--stdin` 读取凭据，不接受命令行参数，以免留在 shell 历史和进程列表中。
+- `hostlane exec`、`logs`、`service`、`kill` 不加 `--json` 时，退出码等于远程命令的退出码，超时为 124，被急停终止为 130；加 `--json` 时只要命令开始执行就返回 0，结果看 `status` 和 `exit_code`。
 
 ## MCP
 
 `hostlane mcp` 用 [rmcp](https://crates.io/crates/rmcp) 实现 stdio MCP Server，由 agent 启动，生命周期跟随 agent。它不持有任何状态，每次工具调用都通过 `hostlane_core::client::Client` 转发到守护进程，因此策略、审批、审计、急停与 CLI 完全一致。
 
 - **工具映射**：`mcp.rs` 中的 `specs` 是一张表，每个工具对应一个守护进程方法，并声明 JSON Schema。调用时只转发 schema 中声明的参数；受管控的方法（`method::GATED`）额外接受 `async`、`ticket_id` 和 `approval_timeout_secs`。`edit_file` 和 `apply_diff` 都映射到 `files.patch`，分别只暴露 `edits` 和 `diff`。`check_policy` 接受工具名和参数，先翻译成方法和参数再调用 `policy.check`。`hosts` 会顺带返回 `connections.list` 的结果。
-- **不开放的方法**：`approvals.resolve`、`policy.resume`、`policy.rules.*`、`hosts.trust`、`hosts.label`、`policy.stop`、`daemon.shutdown`，以及管理保存隧道的 `tunnels.start/update/delete`（agent 只开临时隧道，用 `close_tunnel` 关闭）。单元测试会检查只能由人执行的方法没有被暴露。
+- **不开放的方法**：`approvals.resolve`、`policy.resume`、`policy.rules.*`、`hosts.trust`、`hosts.label`、`hosts.add/update/remove`、`secrets.*`、`policy.stop`、`daemon.shutdown`，以及管理保存隧道的 `tunnels.start/update/delete`（agent 只开临时隧道，用 `close_tunnel` 关闭）。单元测试会检查只能由人执行的方法没有被暴露。
 - **结果**：成功时返回 `structuredContent`（守护进程的原始结果），`content` 是同一份 JSON 文本。失败时返回 `isError: true` 的工具结果，内容为 `{"error":{"kind","message","hint","details"}}`，和 CLI 的 `--json` 错误格式相同；未知工具名返回协议错误 `-32602`。
 - **审批**：默认阻塞等待（与 CLI 非交互模式相同）；`async: true` 时立即返回 `APPROVAL_REQUIRED` 和 `details.ticket_id`。MCP 客户端可能有自己的工具超时（例如 Codex 的 `tool_timeout_sec`），接入页的配置片段把它设为 600 秒。
 - **守护进程**：启动时和遇到 `DAEMON_NOT_RUNNING` 时会调用与 `hostlane daemon start` 相同的逻辑拉起守护进程（服务已安装时交给服务管理器），然后重试一次。stdout 只用于 MCP 协议，不输出日志。

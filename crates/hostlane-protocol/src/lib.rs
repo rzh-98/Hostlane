@@ -14,6 +14,8 @@ mod hosts;
 mod policy;
 mod ports;
 mod rpc;
+mod secrets;
+mod services;
 mod status;
 mod tunnels;
 
@@ -31,8 +33,8 @@ pub use files::{
     FileWriteParams, SearchMatch,
 };
 pub use hosts::{
-    Connection, ConnectionState, ConnectionsList, Host, HostEnv, HostKeyInfo, HostParams,
-    HostSource, HostsList, TrustParams, TrustResult,
+    AuthFailure, Connection, ConnectionState, ConnectionsList, Host, HostAddParams, HostEnv,
+    HostKeyInfo, HostParams, HostRemoved, HostSource, HostsList, TrustParams, TrustResult,
 };
 pub use policy::{
     Approval, ApprovalResolveParams, ApprovalScope, ApprovalState, ApprovalsList,
@@ -46,6 +48,12 @@ pub use ports::{
     ServiceInfo, ServiceKind, TlsInfo,
 };
 pub use rpc::{ClientInfo, Notification, Request, Response};
+pub use secrets::{
+    SavedSecret, SecretChanged, SecretDeleteParams, SecretKind, SecretSetParams, SecretsList,
+};
+pub use services::{
+    ProcessKillParams, ServiceCommandResult, ServiceControlParams, ServiceLogsParams,
+};
 pub use status::DaemonStatus;
 pub use tunnels::{
     Tunnel, TunnelCloseParams, TunnelOpenParams, TunnelOpened, TunnelParams, TunnelState,
@@ -64,6 +72,12 @@ pub mod method {
     pub const HOSTS_DISCONNECT: &str = "hosts.disconnect";
     pub const HOSTS_TRUST: &str = "hosts.trust";
     pub const HOSTS_LABEL: &str = "hosts.label";
+    pub const HOSTS_ADD: &str = "hosts.add";
+    pub const HOSTS_UPDATE: &str = "hosts.update";
+    pub const HOSTS_REMOVE: &str = "hosts.remove";
+    pub const SECRETS_LIST: &str = "secrets.list";
+    pub const SECRETS_SET: &str = "secrets.set";
+    pub const SECRETS_DELETE: &str = "secrets.delete";
     pub const CONNECTIONS_LIST: &str = "connections.list";
     pub const EXEC_RUN: &str = "exec.run";
     pub const EXEC_LIST: &str = "exec.list";
@@ -88,6 +102,11 @@ pub mod method {
     pub const TUNNELS_START: &str = "tunnels.start";
     pub const TUNNELS_UPDATE: &str = "tunnels.update";
     pub const TUNNELS_DELETE: &str = "tunnels.delete";
+    pub const SERVICES_LOGS: &str = "services.logs";
+    pub const SERVICES_START: &str = "services.start";
+    pub const SERVICES_STOP: &str = "services.stop";
+    pub const SERVICES_RESTART: &str = "services.restart";
+    pub const PROCESSES_KILL: &str = "processes.kill";
     pub const APPROVALS_LIST: &str = "approvals.list";
     pub const APPROVALS_GET: &str = "approvals.get";
     pub const APPROVALS_RESOLVE: &str = "approvals.resolve";
@@ -131,6 +150,11 @@ pub mod method {
         TUNNELS_START,
         TUNNELS_UPDATE,
         TUNNELS_DELETE,
+        SERVICES_LOGS,
+        SERVICES_START,
+        SERVICES_STOP,
+        SERVICES_RESTART,
+        PROCESSES_KILL,
     ];
 
     /// Every method the daemon currently implements.
@@ -142,6 +166,12 @@ pub mod method {
         HOSTS_DISCONNECT,
         HOSTS_TRUST,
         HOSTS_LABEL,
+        HOSTS_ADD,
+        HOSTS_UPDATE,
+        HOSTS_REMOVE,
+        SECRETS_LIST,
+        SECRETS_SET,
+        SECRETS_DELETE,
         CONNECTIONS_LIST,
         EXEC_RUN,
         EXEC_LIST,
@@ -166,6 +196,11 @@ pub mod method {
         TUNNELS_START,
         TUNNELS_UPDATE,
         TUNNELS_DELETE,
+        SERVICES_LOGS,
+        SERVICES_START,
+        SERVICES_STOP,
+        SERVICES_RESTART,
+        PROCESSES_KILL,
         APPROVALS_LIST,
         APPROVALS_GET,
         APPROVALS_RESOLVE,

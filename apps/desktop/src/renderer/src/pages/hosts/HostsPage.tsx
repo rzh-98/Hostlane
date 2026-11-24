@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CircleCheck, RefreshCw, Search, Server, ShieldAlert, TriangleAlert } from 'lucide-react'
+import {
+  CircleCheck,
+  KeyRound,
+  RefreshCw,
+  Search,
+  Server,
+  ShieldAlert,
+  TriangleAlert
+} from 'lucide-react'
 import {
   connectionsStore,
   describeConnection,
@@ -25,14 +33,22 @@ import {
   StatusDot
 } from '@/ui'
 import type { HostlaneError } from '@shared/ipc'
+import type { AuthFailure } from '@shared/protocol/AuthFailure'
 import type { Connection } from '@shared/protocol/Connection'
 import type { Host } from '@shared/protocol/Host'
+import type { HostAddParams } from '@shared/protocol/HostAddParams'
 import type { HostEnv } from '@shared/protocol/HostEnv'
 import type { HostKeyInfo } from '@shared/protocol/HostKeyInfo'
 import type { HostsList } from '@shared/protocol/HostsList'
+import type { HostRemoved } from '@shared/protocol/HostRemoved'
 import type { RpcError } from '@shared/protocol/RpcError'
+import type { SavedSecret } from '@shared/protocol/SavedSecret'
+import type { SecretChanged } from '@shared/protocol/SecretChanged'
+import type { SecretsList } from '@shared/protocol/SecretsList'
 import type { TrustResult } from '@shared/protocol/TrustResult'
+import { HostDialog } from './HostDialog'
 import { LabelDialog } from './LabelDialog'
+import { SecretDialog, type SecretTarget } from './SecretDialog'
 
 const envBadge: Record<HostEnv, { label: string; tone: 'success' | 'warning' | 'danger' }> = {
   dev: { label: 'dev', tone: 'success' },
@@ -52,6 +68,27 @@ function hostKeyFrom(error: { kind: string; details?: Record<string, unknown> })
   return error.kind === 'HOST_KEY_UNKNOWN' && error.details
     ? (error.details as unknown as HostKeyInfo)
     : null
+}
+
+function authFailureFrom(error: { kind: string; details?: Record<string, unknown> }) {
+  return error.kind === 'AUTH_FAILED' && error.details
+    ? (error.details as unknown as AuthFailure)
+    : null
+}
+
+function describeSecret(secret: SavedSecret): string {
+  return secret.kind === 'password'
+    ? `${secret.host} 的登录密码`
+    : `${secret.key_path ?? '密钥'} 的口令`
+}
+
+/** Saved secrets that apply to a host: its password and the passphrases of its keys. */
+function secretsOf(host: Host, secrets: SavedSecret[]): SavedSecret[] {
+  return secrets.filter((secret) =>
+    secret.kind === 'password'
+      ? secret.host === host.id
+      : secret.key_path !== undefined && host.identity_files.includes(secret.key_path)
+  )
 }
 
 /** Plain-language explanation of a failed connection. */
@@ -80,11 +117,23 @@ export function HostsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [labeling, setLabeling] = useState<Host | null>(null)
+  const [secrets, setSecrets] = useState<SavedSecret[]>([])
+  const [hostDialog, setHostDialog] = useState<{ editing: HostAddParams | null } | null>(null)
+  const [hostDialogError, setHostDialogError] = useState<string | null>(null)
+  const [removing, setRemoving] = useState<Host | null>(null)
+  const [secretTarget, setSecretTarget] = useState<SecretTarget | null>(null)
+  const [secretError, setSecretError] = useState<string | null>(null)
+  const [deletingSecret, setDeletingSecret] = useState<SavedSecret | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [reply] = await Promise.all([callHostlane<HostsList>('hosts.list'), loadConnections()])
+    const [reply, saved] = await Promise.all([
+      callHostlane<HostsList>('hosts.list'),
+      callHostlane<SecretsList>('secrets.list'),
+      loadConnections()
+    ])
     setLoading(false)
+    if (saved.ok) setSecrets(saved.result.secrets)
     if (reply.ok) {
       setData(reply.result)
       setLoadError(null)
@@ -158,6 +207,95 @@ export function HostsPage() {
     setFeedback({ tone: 'success', text: `已更新 ${host.alias} 的标签` })
   }
 
+  const saveHost = async (params: HostAddParams) => {
+    const editing = hostDialog?.editing ?? null
+    setBusyHost(params.id)
+    setHostDialogError(null)
+    const reply = await callHostlane<Host>(editing ? 'hosts.update' : 'hosts.add', params)
+    setBusyHost(null)
+    if (!reply.ok) {
+      setHostDialogError(
+        reply.error.hint ? `${reply.error.message}。${reply.error.hint}` : reply.error.message
+      )
+      return
+    }
+    setHostDialog(null)
+    await load()
+    setSelectedId(reply.result.id)
+    setFeedback({
+      tone: 'success',
+      text: editing
+        ? `已更新 ${reply.result.id}，现有连接已断开，下次使用时按新配置连接`
+        : `已添加 ${reply.result.id}，点击“连接”核对主机指纹`
+    })
+  }
+
+  const removeHost = async (host: Host) => {
+    setBusyHost(host.id)
+    const reply = await callHostlane<HostRemoved>('hosts.remove', { host: host.id })
+    setBusyHost(null)
+    if (!reply.ok) {
+      setFeedback({ tone: 'danger', text: reply.error.message, hint: reply.error.hint })
+      return
+    }
+    const extras = [
+      reply.result.deleted_tunnels.length > 0
+        ? `${reply.result.deleted_tunnels.length} 条隧道`
+        : null,
+      reply.result.deleted_password ? '已保存的密码' : null
+    ].filter(Boolean)
+    setFeedback({
+      tone: 'success',
+      text: `已删除 ${host.id}${extras.length > 0 ? `，以及它的${extras.join('和')}` : ''}`
+    })
+    void load()
+  }
+
+  const saveSecret = async (secret: string, keyPath: string | undefined) => {
+    if (!secretTarget) return
+    const target = secretTarget
+    setBusyHost(target.host)
+    setSecretError(null)
+    const reply = await callHostlane<SecretChanged>('secrets.set', {
+      host: target.host,
+      kind: target.kind,
+      secret,
+      key_path: keyPath
+    })
+    setBusyHost(null)
+    if (!reply.ok) {
+      setSecretError(reply.error.message)
+      return
+    }
+    setSecretTarget(null)
+    setFeedback({
+      tone: 'success',
+      text: `已保存${describeSecret(reply.result.secret)}到系统钥匙串`
+    })
+    void load()
+  }
+
+  const deleteSecret = async (secret: SavedSecret, host: string) => {
+    setBusyHost(host)
+    const reply = await callHostlane<SecretChanged>('secrets.delete', {
+      host: secret.host ?? host,
+      kind: secret.kind,
+      key_path: secret.key_path
+    })
+    setBusyHost(null)
+    setFeedback(
+      reply.ok
+        ? { tone: 'success', text: `已删除${describeSecret(secret)}` }
+        : { tone: 'danger', text: reply.error.message, hint: reply.error.hint }
+    )
+    void load()
+  }
+
+  const askSecret = (host: Host, kind: SecretTarget['kind']) => {
+    setSecretError(null)
+    setSecretTarget({ host: host.id, kind, keyFiles: host.identity_files })
+  }
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase()
     const hosts = data?.hosts ?? []
@@ -171,6 +309,11 @@ export function HostsPage() {
   const selectedConnection = selected ? byHost[selected.id] : undefined
   const problem = selectedConnection?.state === 'failed' ? selectedConnection.error : undefined
   const unknownKey = problem ? hostKeyFrom(problem.data) : null
+  const authFailure = problem ? authFailureFrom(problem.data) : null
+  const offersPassword =
+    authFailure !== null &&
+    (authFailure.server_methods.length === 0 ||
+      authFailure.server_methods.some((m) => m === 'password' || m === 'keyboard-interactive'))
   const problemInfo = problem && selected ? problemText(selected.id, problem) : null
   const online = phase === 'online'
 
@@ -193,6 +336,16 @@ export function HostsPage() {
           disabled={!online || loading}
           onClick={() => void load()}
         />
+        <Button
+          variant="primary"
+          disabled={!online}
+          onClick={() => {
+            setHostDialogError(null)
+            setHostDialog({ editing: null })
+          }}
+        >
+          添加主机
+        </Button>
       </Toolbar>
 
       {online && loadError && (
@@ -215,10 +368,26 @@ export function HostsPage() {
           tone={unknownKey ? 'warning' : 'danger'}
           icon={<ShieldAlert />}
           actions={
-            unknownKey && (
+            unknownKey ? (
               <Button size="sm" onClick={() => setPendingTrust(unknownKey)}>
                 核对指纹…
               </Button>
+            ) : (
+              authFailure &&
+              selected && (
+                <>
+                  {authFailure.encrypted_keys.length > 0 && (
+                    <Button size="sm" onClick={() => askSecret(selected, 'passphrase')}>
+                      保存密钥口令…
+                    </Button>
+                  )}
+                  {offersPassword && (
+                    <Button size="sm" onClick={() => askSecret(selected, 'password')}>
+                      保存密码…
+                    </Button>
+                  )}
+                </>
+              )
             )
           }
         >
@@ -242,7 +411,7 @@ export function HostsPage() {
         <EmptyState
           icon={<Server />}
           title="还没有主机"
-          description="Hostlane 会读取 ~/.ssh/config 中的 Host 条目。添加后点击刷新。"
+          description="Hostlane 会读取 ~/.ssh/config 中的 Host 条目，也可以直接在这里添加主机。"
         />
       ) : (
         <PageContent padded={false}>
@@ -292,6 +461,16 @@ export function HostsPage() {
                 onConnect={() => void connect(selected.id)}
                 onDisconnect={() => void disconnect(selected.id)}
                 onEditLabels={() => setLabeling(selected)}
+                secrets={secretsOf(selected, secrets)}
+                onEdit={() => {
+                  setHostDialogError(null)
+                  setHostDialog({
+                    editing: data?.manual.find((h) => h.id === selected.id) ?? null
+                  })
+                }}
+                onRemove={() => setRemoving(selected)}
+                onSaveSecret={(kind) => askSecret(selected, kind)}
+                onDeleteSecret={setDeletingSecret}
               />
             ) : (
               <EmptyState icon={<Server />} title="未选择主机" />
@@ -300,6 +479,43 @@ export function HostsPage() {
         </PageContent>
       )}
 
+      <HostDialog
+        open={hostDialog !== null}
+        editing={hostDialog?.editing ?? null}
+        busy={busyHost !== null}
+        error={hostDialogError}
+        onOpenChange={(open) => !open && setHostDialog(null)}
+        onSubmit={(params) => void saveHost(params)}
+      />
+      <SecretDialog
+        target={secretTarget}
+        busy={secretTarget !== null && busyHost === secretTarget.host}
+        error={secretError}
+        onOpenChange={(open) => !open && setSecretTarget(null)}
+        onSubmit={(secret, keyPath) => void saveSecret(secret, keyPath)}
+      />
+      <ConfirmDialog
+        open={removing !== null}
+        onOpenChange={(open) => !open && setRemoving(null)}
+        title={`删除主机 ${removing?.id ?? ''}？`}
+        description="同时删除它的已保存隧道和登录密码。标签和审计记录会保留。"
+        confirmLabel="删除"
+        danger
+        onConfirm={() => {
+          if (removing) void removeHost(removing)
+        }}
+      />
+      <ConfirmDialog
+        open={deletingSecret !== null}
+        onOpenChange={(open) => !open && setDeletingSecret(null)}
+        title={`删除${deletingSecret ? describeSecret(deletingSecret) : ''}？`}
+        description="会从系统钥匙串中删除。之后如果 ssh-agent 和密钥都无法登录，连接会失败。"
+        confirmLabel="删除"
+        danger
+        onConfirm={() => {
+          if (deletingSecret && selected) void deleteSecret(deletingSecret, selected.id)
+        }}
+      />
       <LabelDialog
         host={labeling}
         busy={labeling !== null && busyHost === labeling.id}
@@ -342,6 +558,11 @@ interface HostDetailProps {
   onConnect: () => void
   onDisconnect: () => void
   onEditLabels: () => void
+  secrets: SavedSecret[]
+  onEdit: () => void
+  onRemove: () => void
+  onSaveSecret: (kind: SecretTarget['kind']) => void
+  onDeleteSecret: (secret: SavedSecret) => void
 }
 
 function HostDetail({
@@ -350,8 +571,16 @@ function HostDetail({
   busy,
   onConnect,
   onDisconnect,
-  onEditLabels
+  onEditLabels,
+  secrets,
+  onEdit,
+  onRemove,
+  onSaveSecret,
+  onDeleteSecret
 }: HostDetailProps) {
+  const manual = host.source === 'manual'
+  const password = secrets.find((s) => s.kind === 'password')
+  const passphrases = secrets.filter((s) => s.kind === 'passphrase')
   const status = describeConnection(connection)
   const connected = connection?.state === 'connected'
   const hostKey = connection?.host_key
@@ -433,7 +662,46 @@ function HostDetail({
         <Row label="标签" value={host.tags.length > 0 ? host.tags.join(', ') : '无'} />
       </Section>
 
-      <Section title="配置" divided>
+      <Section
+        title="凭据"
+        divided
+        actions={
+          <>
+            <Button size="sm" disabled={busy} onClick={() => onSaveSecret('passphrase')}>
+              保存密钥口令…
+            </Button>
+            <Button size="sm" disabled={busy} onClick={() => onSaveSecret('password')}>
+              {password ? '更换密码…' : '保存密码…'}
+            </Button>
+          </>
+        }
+      >
+        <FormRow label="登录密码">
+          <SecretState secret={password} busy={busy} onDelete={onDeleteSecret} />
+        </FormRow>
+        {passphrases.map((secret) => (
+          <FormRow key={secret.key_path} label="密钥口令" description={secret.key_path}>
+            <SecretState secret={secret} busy={busy} onDelete={onDeleteSecret} />
+          </FormRow>
+        ))}
+      </Section>
+
+      <Section
+        title="配置"
+        divided
+        actions={
+          manual ? (
+            <>
+              <Button size="sm" disabled={busy} onClick={onRemove}>
+                删除…
+              </Button>
+              <Button size="sm" disabled={busy} onClick={onEdit}>
+                编辑
+              </Button>
+            </>
+          ) : undefined
+        }
+      >
         <Row label="主机地址" value={host.hostname} />
         <Row label="用户" value={host.user ?? '默认（当前用户）'} />
         <Row label="端口" value={String(host.port)} />
@@ -446,6 +714,27 @@ function HostDetail({
         />
       </Section>
     </div>
+  )
+}
+
+function SecretState({
+  secret,
+  busy,
+  onDelete
+}: {
+  secret: SavedSecret | undefined
+  busy: boolean
+  onDelete: (secret: SavedSecret) => void
+}) {
+  if (!secret) return <span className="text-sm text-fg-muted">未保存</span>
+  return (
+    <span className="flex items-center gap-2 text-sm text-fg-muted">
+      <KeyRound className="size-3.5" />
+      已保存到钥匙串 · {formatAgo(secret.saved_at)}
+      <Button size="sm" variant="ghost" disabled={busy} onClick={() => onDelete(secret)}>
+        删除…
+      </Button>
+    </span>
   )
 }
 

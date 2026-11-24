@@ -18,6 +18,7 @@ use hostlane_protocol::{
 use serde_json::{Value, json};
 
 mod files;
+mod manage;
 mod mcp;
 mod policy;
 mod ports;
@@ -57,7 +58,7 @@ struct Cli {
 enum Command {
     /// Show whether the daemon is running.
     Status,
-    /// List known hosts (from ~/.ssh/config) and their connection state.
+    /// List known hosts (~/.ssh/config and hosts added in Hostlane) and their connection state.
     Hosts,
     /// Run a command on a host and print its output.
     ///
@@ -105,6 +106,8 @@ enum Command {
     Tunnels(tunnels::TunnelCommand),
     #[command(flatten)]
     Policy(policy::PolicyCommand),
+    #[command(flatten)]
+    Manage(manage::ManageCommand),
     /// Open the pooled connection to a host and show its host key.
     Connect { host: String },
     /// Trust a host's key after you have verified its fingerprint.
@@ -276,6 +279,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Command::Ports(command) => ports::run(&client, command, json).await?,
         Command::Tunnels(command) => tunnels::run(&client, command, json).await?,
         Command::Policy(command) => policy::run(&client, command, json).await?,
+        Command::Manage(command) => return manage::run(&client, command, json).await,
         Command::Connect { host } => connect(&client, &host, json).await?,
         Command::Trust { host, fingerprint } => trust(&client, &host, fingerprint, json).await?,
         Command::Disconnect { host } => {
@@ -424,7 +428,7 @@ async fn hosts(client: &Client, json: bool) -> Result<()> {
         eprintln!("warning: {warning}");
     }
     if list.hosts.is_empty() {
-        println!("No hosts found. Add entries to ~/.ssh/config.");
+        println!("No hosts found. Add entries to ~/.ssh/config or run `hostlane host add`.");
         return Ok(());
     }
     let connections: ConnectionsList = client

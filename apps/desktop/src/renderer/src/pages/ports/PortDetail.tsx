@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ExternalLink } from 'lucide-react'
+import { ExternalLink, ScrollText } from 'lucide-react'
 import { formatAgo } from '@/app/format'
 import { cn } from '@/lib/cn'
 import { Badge, Button, Field, FormRow, Input, Section, Textarea } from '@/ui'
@@ -28,7 +28,14 @@ interface PortDetailProps {
   onForward: () => void
   onProbe: (serverName: string) => void
   onSaveNote: (draft: NoteDraft) => void
+  /** A service action is running. */
+  acting: boolean
+  onLogs: () => void
+  onService: (action: ServiceAction) => void
+  onKill: () => void
 }
+
+export type ServiceAction = 'restart' | 'stop'
 
 export function PortDetail({
   port,
@@ -37,7 +44,11 @@ export function PortDetail({
   forwarding,
   onForward,
   onProbe,
-  onSaveNote
+  onSaveNote,
+  acting,
+  onLogs,
+  onService,
+  onKill
 }: PortDetailProps) {
   const [serverName, setServerName] = useState('')
   const [draft, setDraft] = useState<NoteDraft>({
@@ -91,7 +102,15 @@ export function PortDetail({
       )}
 
       {process && (
-        <Section title="进程" divided>
+        <Section
+          title="进程"
+          divided
+          actions={
+            <Button size="sm" disabled={acting} onClick={onKill}>
+              结束进程…
+            </Button>
+          }
+        >
           <Row label="名称" value={`${process.name}（PID ${process.pid}）`} />
           {process.user && <Row label="用户" value={process.user} />}
           {process.started_at && <Row label="启动" value={formatAgo(process.started_at)} />}
@@ -100,7 +119,24 @@ export function PortDetail({
       )}
 
       {service && (
-        <Section title={service.kind === 'docker' ? 'Docker 容器' : 'systemd 单元'} divided>
+        <Section
+          title={service.kind === 'docker' ? 'Docker 容器' : 'systemd 单元'}
+          divided
+          actions={
+            <>
+              <Button size="sm" onClick={onLogs}>
+                <ScrollText />
+                日志
+              </Button>
+              <Button size="sm" disabled={acting} onClick={() => onService('stop')}>
+                停止…
+              </Button>
+              <Button size="sm" disabled={acting} onClick={() => onService('restart')}>
+                重启…
+              </Button>
+            </>
+          }
+        >
           <Row label="名称" value={serviceLabel(service)} />
           {service.image && <Row label="镜像" value={service.image} mono />}
           {service.container_id && <Row label="容器 ID" value={service.container_id} mono />}

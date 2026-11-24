@@ -1,15 +1,17 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use hostlane_protocol::{DaemonStatus, ErrorKind, PROTOCOL_VERSION, RpcError};
+use hostlane_protocol::{DaemonStatus, PROTOCOL_VERSION, RpcError};
 use tokio::sync::Notify;
 
+use crate::catalog::Catalog;
 use crate::events::EventBus;
 use crate::policy::Policy;
 use crate::pool::Pool;
+use crate::secrets::Secrets;
 use crate::ssh::Locations;
-use crate::ssh_config::{self, Entry, Loaded};
+use crate::ssh_config::{Entry, Loaded};
 use crate::store::Store;
 use crate::tunnels::Tunnels;
 use crate::util::now_ms;
@@ -49,7 +51,8 @@ pub struct Daemon {
     started_at: u64,
     pub(crate) socket_path: PathBuf,
     pub(crate) data_dir: PathBuf,
-    pub(crate) ssh_config_path: PathBuf,
+    pub(crate) catalog: Catalog,
+    pub(crate) secrets: Arc<Secrets>,
     pub(crate) outputs_dir: PathBuf,
     pub(crate) backups_dir: PathBuf,
     pub(crate) store: Store,
@@ -87,16 +90,19 @@ impl Daemon {
             .parent()
             .map(PathBuf::from)
             .unwrap_or_default();
+        let secrets = Arc::new(Secrets::from_env(&options.data_dir));
         let locations = Locations {
             ssh_dir,
             hostlane_known_hosts: options.data_dir.join("known_hosts"),
+            secrets: secrets.clone(),
         };
+        let catalog = Catalog::new(options.ssh_config_path.clone(), store.clone());
         let pool = Arc::new(Pool::new(locations, events.clone()));
         let tunnels = Arc::new(Tunnels::new(
             pool.clone(),
             events.clone(),
             store.clone(),
-            options.ssh_config_path.clone(),
+            catalog.clone(),
         ));
         let policy = Arc::new(Policy::new(store.clone(), events.clone()));
         Ok(Self {
@@ -104,7 +110,8 @@ impl Daemon {
             started_at: now_ms(),
             socket_path: options.socket_path,
             data_dir: options.data_dir,
-            ssh_config_path: options.ssh_config_path,
+            catalog,
+            secrets,
             outputs_dir,
             backups_dir,
             store,
@@ -151,26 +158,14 @@ impl Daemon {
         }
     }
 
-    /// Hosts with the labels set in Hostlane applied over those from ssh_config.
+    /// Hosts from ssh_config and those added in Hostlane, with labels applied.
     pub(crate) async fn load_hosts(&self) -> Result<Loaded, RpcError> {
-        let mut loaded = load_hosts(&self.ssh_config_path).await?;
-        match self.store.host_labels().await {
-            Ok(labels) => {
-                for entry in &mut loaded.entries {
-                    if let Some((env, tags)) = labels.get(&entry.host.id) {
-                        entry.host.env = *env;
-                        entry.host.tags = tags.clone();
-                    }
-                }
-            }
-            Err(err) => tracing::warn!(%err, "cannot load host labels"),
-        }
-        Ok(loaded)
+        self.catalog.load().await
     }
 
-    /// Finds a host by id, returning it with the config it came from.
+    /// Finds a host by id, returning it with the catalog it came from.
     pub(crate) async fn resolve_host(&self, id: &str) -> Result<(Entry, Loaded), RpcError> {
-        resolve_host(&self.ssh_config_path, id).await
+        self.catalog.resolve(id).await
     }
 
     /// Asks the accept loop to stop; the socket file is removed on the way out.
@@ -182,37 +177,5 @@ impl Daemon {
     pub async fn close(&self) {
         self.tunnels.stop_all().await;
         self.pool.disconnect_all().await;
-    }
-}
-
-pub(crate) async fn load_hosts(path: &Path) -> Result<Loaded, RpcError> {
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || ssh_config::load(&path))
-        .await
-        .map_err(|err| RpcError::new(ErrorKind::Internal, err.to_string()))
-}
-
-/// Finds a host by id in the ssh_config at `path`.
-pub(crate) async fn resolve_host(path: &Path, id: &str) -> Result<(Entry, Loaded), RpcError> {
-    let loaded = load_hosts(path).await?;
-    match loaded.find(id) {
-        Some(entry) => Ok((entry.clone(), loaded)),
-        None => {
-            let known: Vec<String> = loaded
-                .entries
-                .iter()
-                .take(20)
-                .map(|e| e.host.id.clone())
-                .collect();
-            let hint = if known.is_empty() {
-                "no hosts are configured; add a Host block to ~/.ssh/config".to_string()
-            } else {
-                format!("known hosts: {}", known.join(", "))
-            };
-            Err(
-                RpcError::new(ErrorKind::HostNotFound, format!("unknown host `{id}`"))
-                    .with_hint(hint),
-            )
-        }
     }
 }

@@ -69,6 +69,18 @@ def approved(*args, check=True):
     return hl("--ticket", ticket, *args, check=check)
 
 
+def maybe_approved(*args):
+    """Runs a call that may need approval depending on the policy."""
+    out = hl("--async", *args, check=False)
+    if out and out.get("error", {}).get("kind") == "APPROVAL_REQUIRED":
+        ticket = out["error"]["details"]["ticket_id"]
+        hl("approve", ticket, "--yes")
+        out = hl("--ticket", ticket, *args, check=False)
+    if not out or "error" in out:
+        fail(f"hostlane {' '.join(args)}: {out}")
+    return out
+
+
 def expect(condition, message):
     if not condition:
         fail(message)
@@ -153,6 +165,7 @@ def main():
     remote = WORK / "remote"
     remote.mkdir()
 
+    ENV["HOSTLANE_SECRET_STORE"] = "file"
     hl("daemon", "start")
     status = hl("status")
     expect(status.get("pid"), f"daemon not running: {status}")
@@ -245,6 +258,56 @@ def main():
     hl("exec", "test", "--", "true")
     step("emergency stop refuses agent calls until resume")
 
+    passphrase = "e2e-pass-3141"
+    locked = WORK / "id_locked"
+    subprocess.run(
+        ["ssh-keygen", "-q", "-t", "ed25519", "-N", passphrase, "-f", str(locked)], check=True
+    )
+    with open(WORK / "authorized_keys", "a") as keys:
+        keys.write((WORK / "id_locked.pub").read_text())
+    added = hl(
+        "host", "add", "manual", "127.0.0.1", "--port", str(BED.port), "--user", BED.user,
+        "--key", str(locked), "--env", "dev", "--tag", "e2e",
+    )
+    expect(added["source"] == "manual" and added["tags"] == ["e2e"], f"host add: {added}")
+    error = hl_error("host", "add", "manual", "127.0.0.2")
+    expect(error["kind"] == "INVALID_PARAMS", f"duplicate host: {error}")
+    error = hl_error("exec", "manual", "--", "true")
+    expect(error["kind"] == "AUTH_FAILED", f"locked key: {error}")
+    expect(error["details"]["encrypted_keys"], f"auth details: {error}")
+    error = hl_error("secret", "set", "manual", "--passphrase", "--stdin", stdin="wrong\n")
+    expect(error["kind"] == "INVALID_PARAMS", f"wrong passphrase: {error}")
+    hl("secret", "set", "manual", "--passphrase", "--stdin", stdin=passphrase + "\n")
+    result = hl("exec", "manual", "--", "echo unlocked")
+    expect(result["stdout"] == "unlocked\n", f"passphrase login: {result}")
+    secrets = hl("secrets")
+    expect(secrets["store"] == "file" and len(secrets["secrets"]) == 1, f"secrets: {secrets}")
+    expect(passphrase not in json.dumps(secrets), "secrets.list leaks the secret")
+    updated = hl("host", "update", "manual", "--tag", "renamed")
+    expect(updated["tags"] == ["renamed"], f"host update: {updated}")
+    expect(hl("exec", "manual", "--", "true")["exit_code"] == 0, "exec after update")
+    removed = hl("host", "remove", "manual")
+    expect(removed["host"] == "manual", f"host remove: {removed}")
+    expect(all(h["id"] != "manual" for h in hl("hosts")["hosts"]), "removed host listed")
+    error = hl_error("host", "remove", "test")
+    expect(error["kind"] == "INVALID_PARAMS", f"remove ssh_config host: {error}")
+    step("manual hosts and saved key passphrases")
+
+    started = hl("exec", "test", "--", "sh -c 'sleep 300 </dev/null >/dev/null 2>&1 & echo $!'")
+    pid = started["stdout"].strip()
+    expect(pid.isdigit(), f"sleep pid: {started}")
+    killed = maybe_approved("kill", "test", pid)
+    expect(killed["exit_code"] == 0 and killed["command"].startswith("kill -TERM"), f"{killed}")
+    alive = hl("exec", "test", "--", f"sleep 0.2; kill -0 {pid}")
+    expect(alive["exit_code"] != 0, f"process still alive: {alive}")
+    logs = maybe_approved("logs", "test", "hostlane-e2e-missing", "-n", "5")
+    expect("journalctl" in logs["command"], f"logs command: {logs}")
+    logs = maybe_approved("logs", "test", "web", "--docker", "--since", "10m")
+    expect(logs["command"].startswith("docker logs"), f"docker logs command: {logs}")
+    error = hl_error("logs", "test", "a;b")
+    expect(error["kind"] == "INVALID_PARAMS", f"bad unit name: {error}")
+    step("processes.kill and services.logs build and run checked commands")
+
     init, tools, results = mcp_session(
         [
             ("exec", {"host": "test", "command": "echo from-mcp"}),
@@ -253,7 +316,8 @@ def main():
         ]
     )
     expect(init["serverInfo"]["name"] == "hostlane", f"mcp init: {init}")
-    expect({"exec", "read_file", "open_tunnel"} <= set(tools), f"tools: {tools}")
+    expect({"exec", "read_file", "open_tunnel", "service_logs"} <= set(tools), f"tools: {tools}")
+    expect(not {"add_host", "set_secret"} & set(tools), f"person-only tools: {tools}")
     expect(results[0]["structuredContent"]["stdout"] == "from-mcp\n", f"mcp exec: {results[0]}")
     expect("port = 8000" in results[1]["structuredContent"]["content"], f"mcp read: {results[1]}")
     expect(results[2].get("isError"), f"mcp error: {results[2]}")
@@ -265,7 +329,11 @@ def main():
     audit = hl("audit", "--host", "test")["entries"]
     expect(len(audit) >= 10, f"audit entries: {len(audit)}")
     expect(any(e["client"]["name"] == "mcp" for e in audit), "mcp calls not audited")
-    step("calls are audited with their client")
+    everything = json.dumps(hl("audit", "--limit", "500"))
+    expect("secrets.set" in everything and "<redacted>" in everything, "secrets.set not audited")
+    log = (WORK / "data" / "daemon.log").read_text() if (WORK / "data" / "daemon.log").exists() else ""
+    expect(passphrase not in everything and passphrase not in log, "passphrase leaked")
+    step("calls are audited with their client; secrets are redacted")
 
     hl("daemon", "stop")
     step("daemon stops")

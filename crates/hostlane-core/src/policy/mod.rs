@@ -506,6 +506,29 @@ async fn describe(daemon: &Daemon, name: &str, params: &Value) -> Described {
             path = Some(classify::normalize(target));
             summary = format!("{} {target}", name.trim_start_matches("files."));
         }
+        method::SERVICES_LOGS
+        | method::SERVICES_START
+        | method::SERVICES_STOP
+        | method::SERVICES_RESTART
+        | method::PROCESSES_KILL => {
+            let user = match host.as_deref() {
+                Some(host) => crate::services::login_user(daemon, host)
+                    .await
+                    .unwrap_or_else(|_| crate::ssh::local_user()),
+                None => crate::ssh::local_user(),
+            };
+            match crate::services::command(name, params, &user) {
+                Ok(line) => {
+                    assessment = classify::command(&line, None, None);
+                    summary = truncate(&line, SUMMARY_CHARS);
+                    command = Some(line);
+                }
+                Err(err) => {
+                    assessment.raise(Risk::L2, format!("invalid params: {}", err.message));
+                    summary = name.to_string();
+                }
+            }
+        }
         method::HOSTS_TRUST => {
             let fingerprint = str_param(params, "fingerprint").unwrap_or_default();
             assessment.raise(Risk::L2, format!("trusts a new host key ({fingerprint})"));

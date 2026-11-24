@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use hostlane_protocol::{Host, HostEnv, HostSource};
+use hostlane_protocol::{Host, HostAddParams, HostEnv, HostSource};
 
 const MAX_INCLUDE_DEPTH: usize = 16;
 const DEFAULT_PORT: u16 = 22;
@@ -45,6 +45,37 @@ impl Loaded {
 
     pub fn find(&self, id: &str) -> Option<&Entry> {
         self.entries.iter().find(|e| e.host.id == id)
+    }
+
+    /// Adds a host kept by Hostlane. The config's matching blocks (such as `Host *`)
+    /// supply what the host leaves unset; a `Host` block with the same name wins.
+    pub fn add_manual(&mut self, host: &HostAddParams) {
+        if self.find(&host.id).is_some() {
+            self.warnings.push(format!(
+                "the host `{}` added in Hostlane is hidden by a Host block with the same name in ssh_config",
+                host.id
+            ));
+            return;
+        }
+        let mut entry = resolve_alias(&self.blocks, &host.id);
+        entry.host.source = HostSource::Manual;
+        entry.host.hostname = host.hostname.clone();
+        if let Some(port) = host.port {
+            entry.host.port = port;
+        }
+        if host.user.is_some() {
+            entry.host.user = host.user.clone();
+        }
+        if host.proxy_jump.is_some() {
+            entry.host.proxy_jump = host.proxy_jump.clone();
+        }
+        if let Some(file) = &host.identity_file {
+            entry.host.identity_files = vec![expand_tilde(file).display().to_string()];
+            entry.options.identities_only = true;
+        }
+        entry.host.env = None;
+        entry.host.tags = Vec::new();
+        self.entries.push(entry);
     }
 
     /// Applies the config to any name, e.g. a `ProxyJump` hop that has no `Host` block.

@@ -50,6 +50,10 @@ pub struct HostsList {
     pub hosts: Vec<Host>,
     /// Problems found while reading host sources; the list is still usable.
     pub warnings: Vec<String>,
+    /// Settings of the hosts added in Hostlane, as saved with `hosts.add` or
+    /// `hosts.update` (for editing them).
+    #[serde(default)]
+    pub manual: Vec<HostAddParams>,
 }
 
 /// Params of `hosts.connect` and `hosts.disconnect`.
@@ -138,4 +142,64 @@ pub struct TrustResult {
     pub added: bool,
     /// File the key was written to.
     pub known_hosts_path: String,
+}
+
+/// Params of `hosts.add` and `hosts.update`: a host kept by Hostlane rather than in
+/// `~/.ssh/config`. `env` and `tags` are stored like `hosts.label`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HostAddParams {
+    /// Name used everywhere else (`exec <id>`); letters, digits, `.`, `_` and `-`.
+    pub id: String,
+    /// Address or DNS name to connect to.
+    pub hostname: String,
+    /// Login user; defaults to the local user name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub user: Option<String>,
+    /// Defaults to 22.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub port: Option<u16>,
+    /// Jump host(s), as in `ProxyJump`: another host id, or `user@host:port`, comma separated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub proxy_jump: Option<String>,
+    /// Private key file; when set, only this key is offered (`IdentitiesOnly`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub identity_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub env: Option<HostEnv>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// Result of `hosts.remove`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HostRemoved {
+    pub host: String,
+    /// Saved tunnels of this host that were deleted with it.
+    pub deleted_tunnels: Vec<String>,
+    /// Saved password removed from the keychain.
+    pub deleted_password: bool,
+}
+
+/// Details of an `AUTH_FAILED` error: what Hostlane tried and what would help.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AuthFailure {
+    pub host: String,
+    pub user: String,
+    /// Authentication methods the server still offered (`publickey`, `password`,
+    /// `keyboard-interactive`).
+    pub server_methods: Vec<String>,
+    /// Key files that need a passphrase that is not saved (or is wrong).
+    pub encrypted_keys: Vec<String>,
+    pub tried_agent_keys: u32,
+    pub tried_key_files: u32,
+    /// A password is saved for this host (and was rejected, if `password` is offered).
+    pub password_saved: bool,
 }

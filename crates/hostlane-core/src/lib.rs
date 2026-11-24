@@ -4,18 +4,22 @@
 pub mod client;
 pub mod known_hosts;
 pub mod paths;
+pub mod secrets;
 pub mod server;
 pub mod ssh_config;
 
+mod catalog;
 mod events;
 mod exec;
 mod files;
 mod handlers;
+mod hosts;
 mod patch;
 mod policy;
 mod pool;
 mod ports;
 mod remote;
+mod services;
 mod ssh;
 mod state;
 mod store;

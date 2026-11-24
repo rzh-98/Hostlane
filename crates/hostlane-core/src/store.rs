@@ -1,7 +1,9 @@
 //! SQLite storage: the append-only audit log (`calls`), command records for the
 //! session monitor (`execs`), file changes with their diffs (`file_changes`) and the
 //! user's notes on ports (`port_notes`), saved tunnels (`tunnels`), policy rules
-//! (`policy_rules`), host labels (`host_labels`) and small settings (`settings`).
+//! (`policy_rules`), host labels (`host_labels`), hosts added in Hostlane
+//! (`manual_hosts`), which secrets are in the keychain (`secrets`, never the secrets
+//! themselves) and small settings (`settings`).
 //! The database lives at `<data dir>/hostlane.db`.
 
 use std::collections::{BTreeMap, HashMap};
@@ -10,15 +12,15 @@ use std::sync::{Arc, Mutex};
 
 use hostlane_protocol::{
     AuditEntry, AuditList, AuditListParams, AuditOutcome, ClientInfo, ErrorKind, ExecListParams,
-    ExecRecord, ExecStatus, FileChange, FileOperation, HostEnv, PolicyRule, PortNote, Risk,
-    RpcError,
+    ExecRecord, ExecStatus, FileChange, FileOperation, HostAddParams, HostEnv, PolicyRule,
+    PortNote, Risk, RpcError, SavedSecret, SecretKind,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value as Sql};
 use serde_json::{Value, json};
 
 use crate::tunnels::TunnelConfig;
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS calls (
@@ -121,6 +123,25 @@ CREATE TABLE IF NOT EXISTS host_labels (
     env TEXT,
     tags TEXT NOT NULL,
     updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS manual_hosts (
+    id TEXT PRIMARY KEY,
+    hostname TEXT NOT NULL,
+    user TEXT,
+    port INTEGER NOT NULL,
+    proxy_jump TEXT,
+    identity_file TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS secrets (
+    account TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    host TEXT,
+    key_path TEXT,
+    saved_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -640,6 +661,109 @@ impl Store {
                 )?;
             }
             Ok(())
+        })
+        .await
+    }
+
+    /// Hosts added in Hostlane, by id (labels live in `host_labels`).
+    pub async fn manual_hosts(&self) -> Result<Vec<HostAddParams>, RpcError> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare("SELECT * FROM manual_hosts ORDER BY id")?;
+            stmt.query_map([], |row| {
+                Ok(HostAddParams {
+                    id: row.get("id")?,
+                    hostname: row.get("hostname")?,
+                    user: row.get("user")?,
+                    port: Some(row.get::<_, i64>("port")? as u16),
+                    proxy_jump: row.get("proxy_jump")?,
+                    identity_file: row.get("identity_file")?,
+                    env: None,
+                    tags: Vec::new(),
+                })
+            })?
+            .collect()
+        })
+        .await
+    }
+
+    /// Inserts or replaces a manual host.
+    pub async fn save_manual_host(&self, host: HostAddParams) -> Result<(), RpcError> {
+        self.with(move |conn| {
+            let now = crate::util::now_ms() as i64;
+            conn.execute(
+                "INSERT INTO manual_hosts (id, hostname, user, port, proxy_jump, identity_file,
+                 created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+                 ON CONFLICT (id) DO UPDATE SET hostname = ?2, user = ?3, port = ?4,
+                 proxy_jump = ?5, identity_file = ?6, updated_at = ?7",
+                params![
+                    host.id,
+                    host.hostname,
+                    host.user,
+                    host.port.unwrap_or(22),
+                    host.proxy_jump,
+                    host.identity_file,
+                    now,
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Removes a manual host and its labels; returns whether it existed.
+    pub async fn delete_manual_host(&self, id: String) -> Result<bool, RpcError> {
+        self.with(move |conn| {
+            let removed = conn.execute("DELETE FROM manual_hosts WHERE id = ?1", [&id])?;
+            conn.execute("DELETE FROM host_labels WHERE host = ?1", [&id])?;
+            Ok(removed > 0)
+        })
+        .await
+    }
+
+    /// Which secrets are saved in the keychain.
+    pub async fn secrets(&self) -> Result<Vec<SavedSecret>, RpcError> {
+        self.with(|conn| {
+            let mut stmt = conn
+                .prepare("SELECT kind, host, key_path, saved_at FROM secrets ORDER BY account")?;
+            stmt.query_map([], |row| {
+                let kind: String = row.get("kind")?;
+                Ok(SavedSecret {
+                    kind: enum_parse(&kind).unwrap_or(SecretKind::Password),
+                    host: row.get("host")?,
+                    key_path: row.get("key_path")?,
+                    saved_at: row.get::<_, i64>("saved_at")? as u64,
+                })
+            })?
+            .collect()
+        })
+        .await
+    }
+
+    pub async fn record_secret(
+        &self,
+        account: String,
+        secret: SavedSecret,
+    ) -> Result<(), RpcError> {
+        self.with(move |conn| {
+            conn.execute(
+                "INSERT INTO secrets (account, kind, host, key_path, saved_at) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT (account) DO UPDATE SET saved_at = ?5",
+                params![
+                    account,
+                    enum_text(secret.kind),
+                    secret.host,
+                    secret.key_path,
+                    secret.saved_at as i64,
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn forget_secret(&self, account: String) -> Result<bool, RpcError> {
+        self.with(move |conn| {
+            Ok(conn.execute("DELETE FROM secrets WHERE account = ?1", [account])? > 0)
         })
         .await
     }

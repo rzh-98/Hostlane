@@ -23,7 +23,7 @@
 </div>
 
 > [!WARNING]
-> Hostlane is in early development. M0–M6 work today: the daemon, CLI, `~/.ssh/config` import, a pooled SSH client with host key checks, `exec`, the session monitor, the audit log, file operations (read, list, search, hash-checked atomic edits, upload, download, revert) and ports (discovery, process/systemd/Docker mapping, HTTP/HTTPS probing with certificate expiry, notes, free-port lookup) and tunnels (local forwarding with conflict detection, saved tunnels restored on start, auto-reconnect, expiring agent tunnels) and policy (command risk levels, rules, blocking or async approvals with diffs, emergency stop), plus an MCP server, a login service (launchd or systemd) and a desktop app that bundles the binary. There are no signed releases yet. See the [roadmap](#roadmap).
+> Hostlane is in early development. M0–M8 work today: the daemon, CLI, `~/.ssh/config` import, a pooled SSH client with host key checks, `exec`, the session monitor, the audit log, file operations (read, list, search, hash-checked atomic edits, upload, download, revert) and ports (discovery, process/systemd/Docker mapping, HTTP/HTTPS probing with certificate expiry, notes, free-port lookup) and tunnels (local forwarding with conflict detection, saved tunnels restored on start, auto-reconnect, expiring agent tunnels) and policy (command risk levels, rules, blocking or async approvals with diffs, emergency stop), hosts added by hand, passwords and key passphrases kept in the system keychain, and service actions (logs, restart, stop, kill), plus an MCP server, a login service (launchd or systemd) and a desktop app that bundles the binary. There are no signed releases yet. See the [roadmap](#roadmap).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -108,58 +108,65 @@ npm run pack        # or: npm run dist:mac / dist:linux
 
 Every command accepts `--json`. On success, the result goes to stdout; on failure, the exit code is 1 and stdout holds `{"error":{"kind","message","hint"}}`.
 
-| Command                                                                            | What it does                                                                                  |
-| ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `hostlane status`                                                                  | Show whether the daemon is running, its version, PID and socket                               |
-| `hostlane hosts`                                                                   | List hosts from `~/.ssh/config` (`Include`, wildcard blocks and first-value-wins are honored) |
-| `hostlane exec <host> [--cwd DIR] [--env K=V] [--timeout SECS] [--stdin] -- <cmd>` | Run a command on a host. Without `--json`, the exit code is the remote one (124 on timeout)   |
-| `hostlane output <output_id> [--stream stderr] [--offset N]`                       | Read the full output of a truncated command (negative offsets count from the end)             |
-| `hostlane read <host> <path> [--offset N] [--limit N]`                             | Print a text file; its `sha256` and line range go to stderr                                   |
-| `hostlane ls <host> [path]`                                                        | List a directory                                                                              |
-| `hostlane search <host> <pattern> [path] [--glob G] [-F] [-i]`                     | Search file contents with `rg` on the server, or `grep -r` when `rg` is missing               |
-| `hostlane write <host> <path> [--expect SHA256 \| --overwrite] [--mode 0644]`      | Write stdin to a file atomically; replacing a file needs its current hash or `--overwrite`    |
-| `hostlane edit <host> <path> --old TEXT --new TEXT [--all] [--expect SHA256]`      | Replace exact text (repeat `--old`/`--new` for several edits)                                 |
-| `hostlane patch <host> <path> [--expect SHA256]`                                   | Apply a unified diff from stdin                                                               |
-| `hostlane upload` / `download <host> <from> <to>`                                  | Copy files to or from a server (uploads are atomic and checked like `write`)                  |
-| `hostlane diff` / `revert <change_id>`                                             | Show the diff of a file change, or undo it if the file has not changed since                  |
-| `hostlane ports <host> [--no-probe]`                                               | List listening TCP ports with their process, systemd unit or container, HTTP answer and note  |
-| `hostlane port <host> <port> [--server-name DOMAIN]`                               | Show one port in detail: addresses, process, service, HTTP status, title, TLS certificate     |
-| `hostlane port-check <host> <port>`                                                | Check whether a port is in use; suggests the nearest free one                                 |
-| `hostlane free-port <host> [--from N] [--to N] [--count N]`                        | Find free ports (default 8000–9999); ports with a note count as reserved                      |
-| `hostlane port-note <host> <port> [--name N] [--project P] [--note T]`             | Name a port and its project; no fields clears the note                                        |
-| `hostlane tunnel open <host> <port> [--local-port N] [--save] [--ttl SECS]`        | Forward a server port to `127.0.0.1`; picks a free local port and suggests one on conflict    |
-| `hostlane tunnels`                                                                 | List tunnels with state, local address, connections and traffic                               |
-| `hostlane tunnel close <id>` / `close --session S`                                 | Close a tunnel, or every temporary tunnel an agent session opened                             |
-| `hostlane tunnel start` / `update` / `delete <id>`                                 | Restart a stopped tunnel, change its ports or save it, or remove it                           |
-| `hostlane trust <host> [--fingerprint SHA256:…]`                                   | Verify and trust a host key, recorded in Hostlane's own `known_hosts`                         |
-| `hostlane connect` / `disconnect <host>`                                           | Open or close the connection to a host                                                        |
-| `hostlane connections`                                                             | Show connection state, latency, open channels and host keys                                   |
-| `hostlane watch [--host H]`                                                        | Follow every command agents run, with live output (read-only)                                 |
-| `hostlane history`                                                                 | Recent commands                                                                               |
-| `hostlane audit [--host H] [--client C] [--min-risk L2]`                           | Show the audit log with each call's risk and approver                                         |
-| `hostlane approvals [--all]` / `approval <id>`                                     | List calls waiting for approval, or show one with its command or diff, risk and reasons       |
-| `hostlane approve <id> [--scope once\|session\|always]` / `deny <id> [--note T]`   | Decide a waiting call (people only; `always` adds an allow rule)                              |
-| `hostlane stop [--reason T]` / `resume`                                            | Emergency stop: refuse agent calls, stop their commands and close their tunnels; then lift it |
-| `hostlane label <host> [--env prod] [--tag T]… [--clear]`                          | Set a host's environment and tags, which rules and defaults use                               |
-| `hostlane policy status` / `add` / `delete` / `check <host> <cmd>`                 | Show or change rules, or see a command's risk and what the policy would do                    |
-| `hostlane call <method> '<params>'`                                                | Send a raw JSON-RPC call to the daemon                                                        |
-| `hostlane mcp`                                                                     | Serve the tools to an agent over MCP (stdio); starts the daemon if needed                     |
-| `hostlane daemon start` / `stop`                                                   | Start the daemon in the background, or ask it to exit                                         |
-| `hostlane daemon install [--print]` / `uninstall` / `service`                      | Register the daemon as a login service (launchd or `systemd --user`), remove it, or show it   |
-| `hostlane daemon run`                                                              | Run the daemon in the foreground                                                              |
-| `hostlane daemon socket-path`                                                      | Print the socket path clients use                                                             |
+| Command                                                                            | What it does                                                                                                              |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `hostlane status`                                                                  | Show whether the daemon is running, its version, PID and socket                                                           |
+| `hostlane hosts`                                                                   | List hosts from `~/.ssh/config` (`Include`, wildcard blocks and first-value-wins are honored) and hosts added in Hostlane |
+| `hostlane host add <id> <hostname> [--user U] [--port N] [--jump J] [--key PATH]`  | Add a host without editing `~/.ssh/config`; `host update` / `host remove` change or delete it                             |
+| `hostlane secret set <host> --password \| --passphrase [--key PATH] [--stdin]`     | Save a login password or key passphrase in the system keychain, typed at a hidden prompt                                  |
+| `hostlane secrets` / `secret delete <host> --password \| --passphrase`             | List saved secrets (never their values), or delete one                                                                    |
+| `hostlane exec <host> [--cwd DIR] [--env K=V] [--timeout SECS] [--stdin] -- <cmd>` | Run a command on a host. Without `--json`, the exit code is the remote one (124 on timeout)                               |
+| `hostlane output <output_id> [--stream stderr] [--offset N]`                       | Read the full output of a truncated command (negative offsets count from the end)                                         |
+| `hostlane read <host> <path> [--offset N] [--limit N]`                             | Print a text file; its `sha256` and line range go to stderr                                                               |
+| `hostlane ls <host> [path]`                                                        | List a directory                                                                                                          |
+| `hostlane search <host> <pattern> [path] [--glob G] [-F] [-i]`                     | Search file contents with `rg` on the server, or `grep -r` when `rg` is missing                                           |
+| `hostlane write <host> <path> [--expect SHA256 \| --overwrite] [--mode 0644]`      | Write stdin to a file atomically; replacing a file needs its current hash or `--overwrite`                                |
+| `hostlane edit <host> <path> --old TEXT --new TEXT [--all] [--expect SHA256]`      | Replace exact text (repeat `--old`/`--new` for several edits)                                                             |
+| `hostlane patch <host> <path> [--expect SHA256]`                                   | Apply a unified diff from stdin                                                                                           |
+| `hostlane upload` / `download <host> <from> <to>`                                  | Copy files to or from a server (uploads are atomic and checked like `write`)                                              |
+| `hostlane diff` / `revert <change_id>`                                             | Show the diff of a file change, or undo it if the file has not changed since                                              |
+| `hostlane ports <host> [--no-probe]`                                               | List listening TCP ports with their process, systemd unit or container, HTTP answer and note                              |
+| `hostlane port <host> <port> [--server-name DOMAIN]`                               | Show one port in detail: addresses, process, service, HTTP status, title, TLS certificate                                 |
+| `hostlane port-check <host> <port>`                                                | Check whether a port is in use; suggests the nearest free one                                                             |
+| `hostlane free-port <host> [--from N] [--to N] [--count N]`                        | Find free ports (default 8000–9999); ports with a note count as reserved                                                  |
+| `hostlane port-note <host> <port> [--name N] [--project P] [--note T]`             | Name a port and its project; no fields clears the note                                                                    |
+| `hostlane logs <host> <unit\|container> [--docker] [-n N] [--since 10m]`           | Show the journal of a systemd unit or a container's log                                                                   |
+| `hostlane service start\|stop\|restart <host> <name> [--docker] [--user-unit]`     | Control a systemd unit (with `sudo -n` when not root) or a container                                                      |
+| `hostlane kill <host> <pid> [--signal TERM]`                                       | Send a signal to a process                                                                                                |
+| `hostlane tunnel open <host> <port> [--local-port N] [--save] [--ttl SECS]`        | Forward a server port to `127.0.0.1`; picks a free local port and suggests one on conflict                                |
+| `hostlane tunnels`                                                                 | List tunnels with state, local address, connections and traffic                                                           |
+| `hostlane tunnel close <id>` / `close --session S`                                 | Close a tunnel, or every temporary tunnel an agent session opened                                                         |
+| `hostlane tunnel start` / `update` / `delete <id>`                                 | Restart a stopped tunnel, change its ports or save it, or remove it                                                       |
+| `hostlane trust <host> [--fingerprint SHA256:…]`                                   | Verify and trust a host key, recorded in Hostlane's own `known_hosts`                                                     |
+| `hostlane connect` / `disconnect <host>`                                           | Open or close the connection to a host                                                                                    |
+| `hostlane connections`                                                             | Show connection state, latency, open channels and host keys                                                               |
+| `hostlane watch [--host H]`                                                        | Follow every command agents run, with live output (read-only)                                                             |
+| `hostlane history`                                                                 | Recent commands                                                                                                           |
+| `hostlane audit [--host H] [--client C] [--min-risk L2]`                           | Show the audit log with each call's risk and approver                                                                     |
+| `hostlane approvals [--all]` / `approval <id>`                                     | List calls waiting for approval, or show one with its command or diff, risk and reasons                                   |
+| `hostlane approve <id> [--scope once\|session\|always]` / `deny <id> [--note T]`   | Decide a waiting call (people only; `always` adds an allow rule)                                                          |
+| `hostlane stop [--reason T]` / `resume`                                            | Emergency stop: refuse agent calls, stop their commands and close their tunnels; then lift it                             |
+| `hostlane label <host> [--env prod] [--tag T]… [--clear]`                          | Set a host's environment and tags, which rules and defaults use                                                           |
+| `hostlane policy status` / `add` / `delete` / `check <host> <cmd>`                 | Show or change rules, or see a command's risk and what the policy would do                                                |
+| `hostlane call <method> '<params>'`                                                | Send a raw JSON-RPC call to the daemon                                                                                    |
+| `hostlane mcp`                                                                     | Serve the tools to an agent over MCP (stdio); starts the daemon if needed                                                 |
+| `hostlane daemon start` / `stop`                                                   | Start the daemon in the background, or ask it to exit                                                                     |
+| `hostlane daemon install [--print]` / `uninstall` / `service`                      | Register the daemon as a login service (launchd or `systemd --user`), remove it, or show it                               |
+| `hostlane daemon run`                                                              | Run the daemon in the foreground                                                                                          |
+| `hostlane daemon socket-path`                                                      | Print the socket path clients use                                                                                         |
 
 ### Environment variables
 
-| Variable              | Effect                                                                                |
-| --------------------- | ------------------------------------------------------------------------------------- |
-| `HOSTLANE_SOCKET`     | Override the socket path                                                              |
-| `HOSTLANE_DATA_DIR`   | Override the data directory (logs, database)                                          |
-| `HOSTLANE_SSH_CONFIG` | Override the `ssh_config` path                                                        |
-| `HOSTLANE_BIN`        | The `hostlane` binary used by the desktop app                                         |
-| `HOSTLANE_CLIENT`     | Caller name (default `cli`, or `mcp` for `hostlane mcp`), shown in audit and Sessions |
-| `HOSTLANE_SESSION`    | Agent session ID; the Sessions page groups by it                                      |
-| `HOSTLANE_NOTIFY`     | `0` stops the daemon's own system notifications for approvals                         |
+| Variable                | Effect                                                                                                 |
+| ----------------------- | ------------------------------------------------------------------------------------------------------ |
+| `HOSTLANE_SOCKET`       | Override the socket path                                                                               |
+| `HOSTLANE_DATA_DIR`     | Override the data directory (logs, database)                                                           |
+| `HOSTLANE_SSH_CONFIG`   | Override the `ssh_config` path                                                                         |
+| `HOSTLANE_BIN`          | The `hostlane` binary used by the desktop app                                                          |
+| `HOSTLANE_CLIENT`       | Caller name (default `cli`, or `mcp` for `hostlane mcp`), shown in audit and Sessions                  |
+| `HOSTLANE_SESSION`      | Agent session ID; the Sessions page groups by it                                                       |
+| `HOSTLANE_NOTIFY`       | `0` stops the daemon's own system notifications for approvals                                          |
+| `HOSTLANE_SECRET_STORE` | `file` keeps passwords in plain text in `<data dir>/secrets.json` instead of the keychain (tests only) |
 
 To try things without touching your real setup, point all of them at a temporary directory:
 
@@ -208,12 +215,13 @@ The tools map one-to-one onto the CLI:
 | `read_file`, `list_dir`, `search_files`                                                  | `read`, `ls`, `search`                                   |
 | `write_file`, `edit_file`, `apply_diff`, `upload_file`, `download_file`, `revert_change` | `write`, `edit`, `patch`, `upload`, `download`, `revert` |
 | `list_ports`, `inspect_port`, `check_port`, `find_free_port`, `annotate_port`            | `ports`, `port`, `port-check`, `free-port`, `port-note`  |
+| `service_logs`, `start_service`, `stop_service`, `restart_service`, `kill_process`       | `logs`, `service start/stop/restart`, `kill`             |
 | `list_tunnels`, `open_tunnel`, `close_tunnel`                                            | `tunnels`, `tunnel open`, `tunnel close`                 |
 | `check_policy`, `get_approval`                                                           | `policy check`, `approval`                               |
 
 - Policy, approvals and the audit log apply exactly as for the CLI. A call that needs approval waits (up to `approval_timeout_secs`, default 120); with `async: true` it returns `APPROVAL_REQUIRED` and a `ticket_id` at once, and the agent repeats the call with `ticket_id` once you approve.
 - Errors come back as tool errors with `{"error": {"kind", "message", "hint", "details"}}`.
-- What only a person may do is not exposed: approving, rules, trusting host keys, labels and resuming after an emergency stop.
+- What only a person may do is not exposed: approving, rules, trusting host keys, labels, adding or removing hosts, saving passwords and resuming after an emergency stop.
 - Calls are recorded as client `mcp` (or `HOSTLANE_CLIENT`), with one session per server process named after the MCP client, e.g. `codex-mcp-client-4121`.
 
 ### Through the CLI
@@ -233,6 +241,7 @@ Operate servers through the `hostlane` CLI; do not run ssh directly.
 - Every edit returns a `change_id`; `hostlane revert <change_id>` undoes it.
 - Before deploying a service, pick its port with `hostlane --json free-port <host>` or `port-check <host> <port>` instead of guessing. `hostlane --json ports <host>` shows which process, container and HTTP answer sits behind each port; `port <host> <port>` shows one.
 - Record the port a new service uses with `hostlane port-note <host> <port> --name … --project …`.
+- Read a service's log with `hostlane --json logs <host> <unit>` (add `--docker` for a container); restart it with `hostlane --json service restart <host> <unit>` rather than raw systemctl or docker commands.
 - To reach a server's service from this machine, run `hostlane --json tunnel open <host> <port>` and use the returned `tunnel.url`. Close it with `hostlane tunnel close <id>` when done, and run `hostlane tunnel close --session <session id>` when the session ends. Never bind 0.0.0.0 unless the user asks for it.
 - Always pass `--json`; on failure, read error.kind and error.hint to decide the next step.
 - On HOST_KEY_UNKNOWN or HOST_KEY_CHANGED, stop and tell the user; never trust a host key yourself.
@@ -245,22 +254,22 @@ The desktop app's Integrations page has the same snippet with a copy button.
 
 ## Roadmap
 
-| Milestone                  | Scope                                                                                                                                                                                  | Status         |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| **M0** Skeleton            | Rust workspace, daemon, local socket JSON-RPC, CLI, `~/.ssh/config` import, desktop shell                                                                                              | ✅ Done        |
-| **M1** Connect & exec      | `russh` connection pool, host fingerprint checks, `exec`, session monitor, audit log                                                                                                   | ✅ Done        |
-| **M2** Files               | `read_file`, `list_dir`, `search`, `apply_patch`, `write_file`                                                                                                                         | ✅ Done        |
-| **M3** Ports               | Port discovery, process mapping, HTTP probing, port notes, free-port lookup                                                                                                            | ✅ Done        |
-| **M4** Tunnels             | Local forwarding, saved tunnels, auto-reconnect, conflict detection, temporary agent tunnels                                                                                           | ✅ Done        |
-| **M5** Policy              | Risk levels, rules, blocking approvals, global stop                                                                                                                                    | ✅ Done        |
-| **M6** MCP & distribution  | `hostlane mcp`, Integrations page, user-level service registration, bundled binary                                                                                                     | ✅ Done        |
-| **M7** Engineering         | GitHub Actions (checks, end-to-end tests against a local sshd on Linux and macOS, Windows build check, tagged releases of installers and CLI archives), measured performance, app icon | ✅ Done        |
-| **M8** Finish P0           | Add hosts by hand (H1); passwords and passphrase-protected keys stored in the system keychain (H2); service actions: logs, restart, stop, kill (P7); fresh screenshots                 | 🚧 In progress |
-| **M9** Long jobs & clients | Background jobs on `tmux` / `nohup` (E2), per-agent client names and tokens (A5), untrusted-data marking (S6)                                                                          | Planned        |
-| **M10** Web ops            | Exposure analysis (P5), Nginx/Caddy domain mapping (P6), health checks (P9), remote forwarding (T2), host profile (H6), host notes export (H7)                                         | Planned        |
-| **M11** Audit & rollback   | Per-task rollback (F5), timeline (L3), export (L4), session replay (M3)                                                                                                                | Planned        |
-| **M12** Windows            | Named pipe with ACL, Windows OpenSSH agent, Task Scheduler autostart, background launch, PATH setup                                                                                    | Planned        |
-| **V1.0** Release           | Code signing and notarization, auto-update, Homebrew                                                                                                                                   | Planned        |
+| Milestone                  | Scope                                                                                                                                                                                  | Status  |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| **M0** Skeleton            | Rust workspace, daemon, local socket JSON-RPC, CLI, `~/.ssh/config` import, desktop shell                                                                                              | ✅ Done |
+| **M1** Connect & exec      | `russh` connection pool, host fingerprint checks, `exec`, session monitor, audit log                                                                                                   | ✅ Done |
+| **M2** Files               | `read_file`, `list_dir`, `search`, `apply_patch`, `write_file`                                                                                                                         | ✅ Done |
+| **M3** Ports               | Port discovery, process mapping, HTTP probing, port notes, free-port lookup                                                                                                            | ✅ Done |
+| **M4** Tunnels             | Local forwarding, saved tunnels, auto-reconnect, conflict detection, temporary agent tunnels                                                                                           | ✅ Done |
+| **M5** Policy              | Risk levels, rules, blocking approvals, global stop                                                                                                                                    | ✅ Done |
+| **M6** MCP & distribution  | `hostlane mcp`, Integrations page, user-level service registration, bundled binary                                                                                                     | ✅ Done |
+| **M7** Engineering         | GitHub Actions (checks, end-to-end tests against a local sshd on Linux and macOS, Windows build check, tagged releases of installers and CLI archives), measured performance, app icon | ✅ Done |
+| **M8** Finish P0           | Add hosts by hand (H1); passwords and passphrase-protected keys stored in the system keychain (H2); service actions: logs, restart, stop, kill (P7); fresh screenshots                 | ✅ Done |
+| **M9** Long jobs & clients | Background jobs on `tmux` / `nohup` (E2), per-agent client names and tokens (A5), untrusted-data marking (S6)                                                                          | Planned |
+| **M10** Web ops            | Exposure analysis (P5), Nginx/Caddy domain mapping (P6), health checks (P9), remote forwarding (T2), host profile (H6), host notes export (H7)                                         | Planned |
+| **M11** Audit & rollback   | Per-task rollback (F5), timeline (L3), export (L4), session replay (M3)                                                                                                                | Planned |
+| **M12** Windows            | Named pipe with ACL, Windows OpenSSH agent, Task Scheduler autostart, background launch, PATH setup                                                                                    | Planned |
+| **V1.0** Release           | Code signing and notarization, auto-update, Homebrew                                                                                                                                   | Planned |
 
 The order of M9 and M10 depends on which scenarios come up most in real use. The full requirement list, with IDs and priorities, is in [docs/requirements.md](docs/requirements.md) (Chinese).
 
@@ -314,7 +323,7 @@ cargo build --release -p hostlane-cli && python3 scripts/bench.py
 - The audit log is append-only: database triggers reject updates and deletes.
 - Every call that touches a server is classified by risk and checked against your rules before it runs. Calls from the desktop app are always allowed; the CLI is treated like an agent, but in a terminal it asks you directly.
 - Caller names (`HOSTLANE_CLIENT`) are declared by the client, not authenticated. The policy keeps a well-behaved agent from making mistakes; it is not a sandbox against code running as your user.
-- Authentication uses ssh-agent or unencrypted key files; `ssh-add` passphrase-protected keys first. Password login is not supported yet.
+- Authentication tries ssh-agent, then key files, then a saved password. Passwords and key passphrases live in the system keychain (macOS Keychain, Secret Service on Linux, Windows Credential Manager); only the daemon reads them, and the audit log records `<redacted>` in their place. `hostlane secret set` reads them from a hidden prompt or stdin, never from arguments.
 - The renderer runs sandboxed and can call only an explicit allowlist of daemon methods.
 - Hostlane sends no telemetry and talks to nothing except your servers.
 
@@ -345,6 +354,13 @@ None. Hostlane is the runtime; the agent you already use is the brain.
 <summary>Can I type into the session terminal?</summary>
 
 No, by design. The session monitor is read-only so that everything that happens on a server goes through the same policy checks and audit log.
+
+</details>
+
+<details>
+<summary>Can I log in with a password, or with a key that has a passphrase?</summary>
+
+Yes. Save it once with `hostlane secret set <host> --password` (or `--passphrase`), or from the host's page in the desktop app. Hostlane keeps it in the system keychain and uses it only after ssh-agent and key files fail. On Linux this needs a Secret Service provider such as GNOME Keyring or KeePassXC.
 
 </details>
 

@@ -139,7 +139,7 @@ pub enum EnvArg {
 }
 
 impl EnvArg {
-    fn env(self) -> Option<HostEnv> {
+    pub(crate) fn env(self) -> Option<HostEnv> {
         match self {
             Self::Dev => Some(HostEnv::Dev),
             Self::Staging => Some(HostEnv::Staging),

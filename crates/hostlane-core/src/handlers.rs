@@ -16,15 +16,23 @@ use serde_json::{Value, json};
 use crate::Daemon;
 use crate::exec;
 use crate::files;
+use crate::hosts;
 use crate::policy::{self, GateOptions, require_person};
 use crate::ports;
+use crate::services;
 use crate::ssh::Trust;
 use crate::store::NewCall;
 use crate::util::{now_ms, sha256_hex};
 
-/// Policy changes, recorded in the audit log along with the gated methods.
+/// Policy, host and credential changes, recorded in the audit log along with the
+/// gated methods.
 const POLICY_CHANGES: &[&str] = &[
     method::HOSTS_LABEL,
+    method::HOSTS_ADD,
+    method::HOSTS_UPDATE,
+    method::HOSTS_REMOVE,
+    method::SECRETS_SET,
+    method::SECRETS_DELETE,
     method::APPROVALS_RESOLVE,
     method::POLICY_STOP,
     method::POLICY_RESUME,
@@ -53,7 +61,9 @@ pub(crate) async fn dispatch(
         .and_then(Value::as_str)
         .map(str::to_owned);
     let recorded_params = redact_params(&params);
-    let (risk, approver, result) = if gated {
+    let (risk, approver, result) = if let Err(err) = services::validate(name, &params) {
+        (None, None, Err(err))
+    } else if gated {
         let gate = policy::authorize(daemon, client, name, &params, options).await;
         match gate.result {
             Ok(approver) => {
@@ -110,6 +120,9 @@ pub(crate) fn redact_params(params: &Value) -> Value {
     let Some(object) = params.as_object_mut() else {
         return params;
     };
+    if object.contains_key("secret") {
+        object.insert("secret".into(), json!("<redacted>"));
+    }
     if let Some(content) = object.get("content").and_then(Value::as_str) {
         let summary = json!({ "bytes": content.len(), "sha256": sha256_hex(content.as_bytes()) });
         object.insert("content".into(), summary);
@@ -167,9 +180,24 @@ async fn run(
         }
         method::HOSTS_LIST => {
             let loaded = daemon.load_hosts().await?;
+            let hosts = loaded.hosts();
+            let manual = daemon
+                .store
+                .manual_hosts()
+                .await?
+                .into_iter()
+                .map(|mut params| {
+                    if let Some(host) = hosts.iter().find(|h| h.id == params.id) {
+                        params.env = host.env;
+                        params.tags = host.tags.clone();
+                    }
+                    params
+                })
+                .collect();
             to_value(HostsList {
-                hosts: loaded.hosts(),
+                hosts,
                 warnings: loaded.warnings,
+                manual,
             })
         }
         method::HOSTS_CONNECT => {
@@ -285,6 +313,35 @@ async fn run(
                 .map(|entry| entry.host.clone())
                 .ok_or_else(|| RpcError::new(ErrorKind::HostNotFound, "host vanished"))?;
             to_value(host)
+        }
+        method::HOSTS_ADD => {
+            require_person(client, "add hosts")?;
+            to_value(hosts::add(daemon, parse(params)?).await?)
+        }
+        method::HOSTS_UPDATE => {
+            require_person(client, "change hosts")?;
+            to_value(hosts::update(daemon, parse(params)?).await?)
+        }
+        method::HOSTS_REMOVE => {
+            require_person(client, "remove hosts")?;
+            let params: HostParams = parse(params)?;
+            to_value(hosts::remove(daemon, &params.host).await?)
+        }
+        method::SECRETS_LIST => to_value(hosts::list_secrets(daemon).await?),
+        method::SECRETS_SET => {
+            require_person(client, "save passwords and passphrases")?;
+            to_value(hosts::set_secret(daemon, parse(params)?).await?)
+        }
+        method::SECRETS_DELETE => {
+            require_person(client, "delete saved passwords and passphrases")?;
+            to_value(hosts::delete_secret(daemon, parse(params)?).await?)
+        }
+        method::SERVICES_LOGS
+        | method::SERVICES_START
+        | method::SERVICES_STOP
+        | method::SERVICES_RESTART
+        | method::PROCESSES_KILL => {
+            to_value(services::run(daemon, client, name, params, approver).await?)
         }
         method::APPROVALS_LIST => {
             let params: ApprovalsListParams = parse_or_default(params)?;
@@ -407,6 +464,11 @@ mod tests {
         assert_eq!(recorded["content"]["bytes"], 6);
         assert_eq!(recorded["edits"]["count"], 2);
         assert!(!recorded.to_string().contains("secret"));
+
+        let secret =
+            redact_params(&json!({ "host": "h", "kind": "password", "secret": "hunter2" }));
+        assert_eq!(secret["secret"], "<redacted>");
+        assert!(!secret.to_string().contains("hunter2"));
 
         let result = json!({ "content": "x", "sha256": "ab", "matches": [1, 2] });
         let summary = summarize(&result);

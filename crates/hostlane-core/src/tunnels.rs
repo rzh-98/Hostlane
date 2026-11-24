@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::path::PathBuf;
+
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -23,11 +23,11 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Notify, watch};
 use tokio::task::{JoinHandle, JoinSet};
 
+use crate::catalog::Catalog;
 use crate::events::EventBus;
 use crate::policy::is_desktop;
 use crate::pool::{Conn, Pool};
 use crate::ssh::Trust;
-use crate::state::resolve_host;
 use crate::store::{NewCall, Store};
 use crate::util::{new_id, now_ms};
 
@@ -188,7 +188,7 @@ struct Ctx {
     pool: Arc<Pool>,
     events: EventBus,
     store: Store,
-    ssh_config_path: PathBuf,
+    catalog: Catalog,
 }
 
 impl Ctx {
@@ -209,7 +209,7 @@ impl Ctx {
     }
 
     async fn connect(&self, host: &str) -> Result<Arc<Conn>, RpcError> {
-        let (entry, loaded) = resolve_host(&self.ssh_config_path, host).await?;
+        let (entry, loaded) = self.catalog.resolve(host).await?;
         let (conn, _, _) = self.pool.connect(&entry, &loaded, Trust::Strict).await?;
         Ok(conn)
     }
@@ -223,13 +223,13 @@ pub(crate) struct Tunnels {
 }
 
 impl Tunnels {
-    pub fn new(pool: Arc<Pool>, events: EventBus, store: Store, ssh_config_path: PathBuf) -> Self {
+    pub fn new(pool: Arc<Pool>, events: EventBus, store: Store, catalog: Catalog) -> Self {
         Self {
             ctx: Ctx {
                 pool,
                 events,
                 store,
-                ssh_config_path,
+                catalog,
             },
             map: Mutex::new(HashMap::new()),
             ops: tokio::sync::Mutex::new(()),

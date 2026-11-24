@@ -3,7 +3,8 @@
 //! Each tool forwards its arguments (only the properties its schema declares) to the
 //! daemon through [`Client`], so the daemon's policy, approvals and audit log apply to
 //! MCP calls exactly as they do to the CLI. Tools only a person may use (approving,
-//! rules, trusting host keys, resuming after an emergency stop) are not exposed.
+//! rules, trusting host keys, resuming after an emergency stop, adding hosts, saving
+//! passwords) are not exposed.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -20,8 +21,8 @@ use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt};
 use serde_json::{Value, json};
 
-const INSTRUCTIONS: &str = "Hostlane runs commands, edits files, inspects ports and opens \
-SSH tunnels on the user's servers (the hosts in ~/.ssh/config), all from this machine. \
+const INSTRUCTIONS: &str = "Hostlane runs commands, edits files, inspects ports, reads service logs and opens \
+SSH tunnels on the user's servers (the hosts in ~/.ssh/config or added in Hostlane), all from this machine. \
 Start with `hosts`. Risky calls may wait for a person to approve them in the Hostlane app; \
 pass `async: true` to get an APPROVAL_REQUIRED error with a `ticket_id` instead, check it \
 with `get_approval`, and repeat the call with `ticket_id` once approved. Errors carry a \
@@ -55,6 +56,27 @@ fn host() -> Value {
 
 fn port(description: &str) -> Value {
     json!({ "type": "integer", "minimum": 1, "maximum": 65535, "description": description })
+}
+
+fn service_kind() -> Value {
+    json!({ "type": "string", "enum": ["systemd", "docker"], "description": "systemd unit or Docker container." })
+}
+
+fn service_control(name: &'static str, method: &'static str, description: &'static str) -> Spec {
+    Spec {
+        name,
+        method,
+        description,
+        properties: json!({
+            "host": host(),
+            "kind": service_kind(),
+            "name": string("Unit name (e.g. `nginx`) or container name or id."),
+            "user_unit": boolean("A systemd user unit (systemctl --user)."),
+            "sudo": boolean("Run with `sudo -n`; defaults to true for system units when the SSH user is not root.")
+        }),
+        required: &["host", "kind", "name"],
+        read_only: false,
+    }
 }
 
 fn specs() -> Vec<Spec> {
@@ -308,6 +330,57 @@ fn specs() -> Vec<Spec> {
                 "note": string("Free text.")
             }),
             required: &["host", "port"],
+            read_only: false,
+        },
+        Spec {
+            name: "service_logs",
+            method: method::SERVICES_LOGS,
+            description: "Last lines of a systemd unit's journal or a Docker container's \
+                log (stdout and stderr together), e.g. for the service behind a port \
+                from list_ports.",
+            properties: json!({
+                "host": host(),
+                "kind": service_kind(),
+                "name": string("Unit name (e.g. `nginx`) or container name or id."),
+                "user_unit": boolean("A systemd user unit (journalctl --user)."),
+                "lines": integer("Number of lines (default 200, at most 10000)."),
+                "since": string("Only newer entries: 30s, 10m, 2h or 1d."),
+                "sudo": boolean("Run with `sudo -n` (default false).")
+            }),
+            required: &["host", "kind", "name"],
+            read_only: true,
+        },
+        service_control(
+            "start_service",
+            method::SERVICES_START,
+            "Start a systemd unit or a Docker container.",
+        ),
+        service_control(
+            "stop_service",
+            method::SERVICES_STOP,
+            "Stop a systemd unit or a Docker container.",
+        ),
+        service_control(
+            "restart_service",
+            method::SERVICES_RESTART,
+            "Restart a systemd unit or a Docker container, e.g. after changing its config.",
+        ),
+        Spec {
+            name: "kill_process",
+            method: method::PROCESSES_KILL,
+            description: "Send a signal to a process by pid (see list_ports for the pid \
+                behind a port).",
+            properties: json!({
+                "host": host(),
+                "pid": integer("Process id (greater than 1)."),
+                "signal": {
+                    "type": "string",
+                    "enum": ["TERM", "INT", "HUP", "KILL", "QUIT", "USR1", "USR2"],
+                    "description": "Default TERM."
+                },
+                "sudo": boolean("Run with `sudo -n` (default false).")
+            }),
+            required: &["host", "pid"],
             read_only: false,
         },
         Spec {
@@ -645,6 +718,12 @@ mod tests {
                     method::POLICY_RULES_DELETE,
                     method::HOSTS_TRUST,
                     method::HOSTS_LABEL,
+                    method::HOSTS_ADD,
+                    method::HOSTS_UPDATE,
+                    method::HOSTS_REMOVE,
+                    method::SECRETS_LIST,
+                    method::SECRETS_SET,
+                    method::SECRETS_DELETE,
                     method::DAEMON_SHUTDOWN,
                 ]
                 .contains(&spec.method)

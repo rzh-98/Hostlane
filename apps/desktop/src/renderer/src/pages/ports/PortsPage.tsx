@@ -4,19 +4,32 @@ import { callHostlane, daemonStore } from '@/app/daemon'
 import { DaemonOffline } from '@/app/DaemonOffline'
 import { formatAgo } from '@/app/format'
 import { Page, PageContent, Toolbar } from '@/layout'
-import { Badge, Button, EmptyState, IconButton, Input, List, ListItem, Notice, Select } from '@/ui'
+import {
+  Badge,
+  Button,
+  ConfirmDialog,
+  EmptyState,
+  IconButton,
+  Input,
+  List,
+  ListItem,
+  Notice,
+  Select
+} from '@/ui'
 import type { HostlaneError } from '@shared/ipc'
 import type { FreePorts } from '@shared/protocol/FreePorts'
 import type { HostsList } from '@shared/protocol/HostsList'
 import type { ListeningPort } from '@shared/protocol/ListeningPort'
 import type { PortAnnotated } from '@shared/protocol/PortAnnotated'
 import type { PortsList } from '@shared/protocol/PortsList'
+import type { ServiceCommandResult } from '@shared/protocol/ServiceCommandResult'
 import type { TunnelOpened } from '@shared/protocol/TunnelOpened'
 import type { TunnelsList } from '@shared/protocol/TunnelsList'
 import { browserUrl, remoteHostFor } from '@/pages/tunnels/describe'
 import { answerLabel, bindLabels, certLabel, certTone, ownerLabel, statusTone } from './describe'
 import { FreePortDialog, type FreePortQuery } from './FreePortDialog'
-import { PortDetail, type NoteDraft } from './PortDetail'
+import { LogsDialog, type LogsState } from './LogsDialog'
+import { PortDetail, type NoteDraft, type ServiceAction } from './PortDetail'
 
 const HOST_KEY = 'hostlane.ports.host'
 
@@ -24,6 +37,18 @@ type Feedback = { tone: 'success' | 'danger'; text: string; hint?: string }
 
 function errorFeedback(error: HostlaneError): Feedback {
   return { tone: 'danger', text: error.message, hint: error.hint }
+}
+
+type PendingAction = { action: ServiceAction | 'kill'; port: ListeningPort }
+
+const actionVerbs: Record<PendingAction['action'], string> = {
+  restart: '重启',
+  stop: '停止',
+  kill: '结束'
+}
+
+function firstLine(text: string): string {
+  return text.trim().split('\n')[0] ?? ''
 }
 
 function matches(port: ListeningPort, query: string): boolean {
@@ -58,6 +83,9 @@ export function PortsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [probing, setProbing] = useState(false)
+  const [logs, setLogs] = useState<LogsState | null>(null)
+  const [pending, setPending] = useState<PendingAction | null>(null)
+  const [acting, setActing] = useState(false)
   const [savingNote, setSavingNote] = useState(false)
   const [findingFree, setFindingFree] = useState(false)
   const [freeOpen, setFreeOpen] = useState(false)
@@ -192,6 +220,63 @@ export function PortsPage() {
     })
   }
 
+  const loadLogs = async (target: Pick<LogsState, 'host' | 'service'>, lines: number) => {
+    setLogs((current) => ({
+      ...target,
+      loading: true,
+      result: current?.service === target.service ? current.result : null,
+      error: null
+    }))
+    const reply = await callHostlane<ServiceCommandResult>('services.logs', {
+      host: target.host,
+      kind: target.service.kind,
+      name: target.service.name,
+      user_unit: target.service.user_unit,
+      lines
+    })
+    setLogs((current) =>
+      current?.service !== target.service
+        ? current
+        : reply.ok
+          ? { ...current, loading: false, result: reply.result }
+          : { ...current, loading: false, error: reply.error.message }
+    )
+  }
+
+  const runAction = async ({ action, port }: PendingAction) => {
+    const { service, process } = port
+    if (!host || (action === 'kill' ? !process : !service)) return
+    setActing(true)
+    setFeedback(null)
+    const reply =
+      action === 'kill'
+        ? await callHostlane<ServiceCommandResult>('processes.kill', { host, pid: process?.pid })
+        : await callHostlane<ServiceCommandResult>(`services.${action}`, {
+            host,
+            kind: service?.kind,
+            name: service?.name,
+            user_unit: service?.user_unit
+          })
+    setActing(false)
+    const target =
+      action === 'kill' ? `进程 ${port.process?.name}（PID ${port.process?.pid}）` : service?.name
+    if (!reply.ok) {
+      setFeedback(errorFeedback(reply.error))
+      return
+    }
+    const result = reply.result
+    if (result.exit_code === 0) {
+      setFeedback({ tone: 'success', text: `已${actionVerbs[action]} ${target}` })
+      void load(host)
+    } else {
+      setFeedback({
+        tone: 'danger',
+        text: `${actionVerbs[action]} ${target} 失败：${firstLine(result.stderr) || firstLine(result.stdout) || `退出码 ${result.exit_code}`}`,
+        hint: result.hint
+      })
+    }
+  }
+
   const findFree = async (search: FreePortQuery) => {
     if (!host) return
     setFindingFree(true)
@@ -286,7 +371,7 @@ export function PortsPage() {
         <EmptyState
           icon={<Network />}
           title="还没有主机"
-          description="在 ~/.ssh/config 中添加主机后，这里会列出它的监听端口。"
+          description="在主机页或 ~/.ssh/config 中添加主机后，这里会列出它的监听端口。"
         />
       ) : !data || data.host !== host ? (
         <EmptyState
@@ -323,6 +408,14 @@ export function PortsPage() {
                 onForward={() => void forward(selected)}
                 onProbe={(serverName) => void probe(selected.port, serverName)}
                 onSaveNote={(draft) => void saveNote(selected, draft)}
+                acting={acting}
+                onLogs={() =>
+                  host &&
+                  selected.service &&
+                  void loadLogs({ host, service: selected.service }, 200)
+                }
+                onService={(action) => setPending({ action, port: selected })}
+                onKill={() => setPending({ action: 'kill', port: selected })}
               />
             ) : (
               <EmptyState icon={<Network />} title="选择端口查看详情" />
@@ -331,6 +424,32 @@ export function PortsPage() {
         </PageContent>
       )}
 
+      <LogsDialog
+        logs={logs}
+        onOpenChange={(open) => !open && setLogs(null)}
+        onLoad={(lines) => logs && void loadLogs(logs, lines)}
+      />
+      <ConfirmDialog
+        open={pending !== null}
+        onOpenChange={(open) => !open && setPending(null)}
+        title={
+          pending?.action === 'kill'
+            ? `结束 ${pending.port.process?.name}（PID ${pending.port.process?.pid}）？`
+            : `${pending ? actionVerbs[pending.action] : ''} ${pending?.port.service?.name ?? ''}？`
+        }
+        description={
+          pending?.action === 'kill'
+            ? `向进程发送 SIGTERM。如果它由 systemd 或 Docker 管理，可能会被自动拉起；停止服务更可靠。`
+            : pending?.action === 'stop'
+              ? `${host} 上的 ${pending.port.service?.name} 会停止，端口 ${pending.port.port} 不再提供服务，直到再次启动。`
+              : `${host} 上的 ${pending?.port.service?.name} 会短暂中断。系统单元在登录用户不是 root 时使用 sudo -n。`
+        }
+        confirmLabel={pending ? actionVerbs[pending.action] : '确定'}
+        danger={pending?.action !== 'restart'}
+        onConfirm={() => {
+          if (pending) void runAction(pending)
+        }}
+      />
       <FreePortDialog
         open={freeOpen}
         host={host ?? ''}
