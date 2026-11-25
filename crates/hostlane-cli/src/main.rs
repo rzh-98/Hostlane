@@ -20,6 +20,7 @@ use serde_json::{Value, json};
 mod clients;
 mod files;
 mod jobs;
+mod journal;
 mod manage;
 mod mcp;
 mod policy;
@@ -115,6 +116,8 @@ enum Command {
     Jobs(jobs::JobsCommand),
     #[command(flatten)]
     Clients(clients::ClientsCommand),
+    #[command(flatten)]
+    Journal(journal::JournalCommand),
     /// Inspect web services and manage host context and monitoring.
     #[command(subcommand)]
     Web(web::WebCommand),
@@ -232,6 +235,7 @@ fn client_info() -> ClientInfo {
     ClientInfo {
         name: non_empty("HOSTLANE_CLIENT").unwrap_or_else(|| "cli".into()),
         session: non_empty("HOSTLANE_SESSION"),
+        task: non_empty("HOSTLANE_TASK"),
         verified: false,
     }
 }
@@ -303,6 +307,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Command::Manage(command) => return manage::run(&client, command, json).await,
         Command::Jobs(command) => return jobs::run(&client, command, json).await,
         Command::Clients(command) => clients::run(&client, command, json).await?,
+        Command::Journal(command) => journal::run(&client, command, json).await?,
         Command::Web(command) => web::run(&client, command, json).await?,
         Command::Connect { host } => connect(&client, &host, json).await?,
         Command::Trust { host, fingerprint } => trust(&client, &host, fingerprint, json).await?,

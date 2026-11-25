@@ -59,6 +59,12 @@ pub struct AuditEntry {
 pub struct AuditListParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    pub session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub task: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub host: Option<String>,
     /// Client name, e.g. `cli`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -95,4 +101,22 @@ pub struct AuditListParams {
 pub struct AuditList {
     pub entries: Vec<AuditEntry>,
     pub has_more: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RollbackScope {
+    pub task: String,
+    #[ts(optional)]
+    pub host: Option<String>,
+    #[ts(optional)]
+    pub client: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RollbackItem {
+    pub change_id: String,
+    pub host: String,
+    pub path: String,
 }

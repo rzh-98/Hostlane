@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 
 use crate::tunnels::TunnelConfig;
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS calls (
@@ -183,6 +183,9 @@ CREATE TABLE IF NOT EXISTS settings (
 
 /// Columns added after a table was first created: (table, column, definition).
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("calls", "task", "TEXT"),
+    ("execs", "task", "TEXT"),
+    ("file_changes", "task", "TEXT"),
     ("calls", "risk", "INTEGER"),
     ("execs", "approver", "TEXT"),
     ("calls", "verified", "INTEGER NOT NULL DEFAULT 0"),
@@ -282,6 +285,7 @@ impl Store {
             }
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS calls_task ON calls(task,id); CREATE INDEX IF NOT EXISTS calls_session ON calls(session,id); CREATE INDEX IF NOT EXISTS changes_task ON file_changes(task,created_at)")?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -318,6 +322,12 @@ impl Store {
             if let Some(host) = params.host {
                 filter(" AND host = ?", Sql::Text(host));
             }
+            if let Some(task) = params.task {
+                filter(" AND task = ?", Sql::Text(task));
+            }
+            if let Some(session) = params.session {
+                filter(" AND session = ?", Sql::Text(session));
+            }
             if let Some(client) = params.client {
                 filter(" AND client = ?", Sql::Text(client));
             }
@@ -353,8 +363,8 @@ impl Store {
         self.with(move |conn| {
             conn.execute(
                 "INSERT INTO execs (id, host, command, cwd, client, session, status, started_at, params,
-                 approver, verified)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                 approver, verified, task)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     record.id,
                     record.host,
@@ -367,6 +377,7 @@ impl Store {
                     params.to_string(),
                     record.approver,
                     record.client.verified,
+                    record.client.task,
                 ],
             )?;
             Ok(())
@@ -429,8 +440,8 @@ impl Store {
             conn.execute(
                 "INSERT INTO file_changes (id, host, path, operation, client, session, created_at,
                  created, deleted, previous_sha256, sha256, size, added_lines, removed_lines, diff,
-                 has_backup)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                 has_backup, task)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
                 params![
                     change.id,
                     change.host,
@@ -448,6 +459,7 @@ impl Store {
                     change.removed_lines as i64,
                     change.diff,
                     change.has_backup,
+                    change.client.task,
                 ],
             )?;
             Ok(())
@@ -465,6 +477,22 @@ impl Store {
             .optional()
         })
         .await
+    }
+
+    pub async fn rollback_plan(
+        &self,
+        scope: hostlane_protocol::RollbackScope,
+    ) -> Result<Vec<hostlane_protocol::RollbackItem>, RpcError> {
+        if scope.task.trim().is_empty() {
+            return Err(RpcError::new(
+                hostlane_protocol::ErrorKind::InvalidParams,
+                "task must not be empty",
+            ));
+        }
+        self.with(move |conn| {
+            let mut stmt = conn.prepare("SELECT id,host,path FROM file_changes WHERE task=?1 AND (?2 IS NULL OR host=?2) AND (?3 IS NULL OR client=?3) AND operation != 'revert' AND id NOT IN (SELECT json_extract(params,'$.change_id') FROM calls WHERE method='files.revert' AND outcome='ok' AND json_type(params,'$.change_id')='text') ORDER BY rowid DESC")?;
+            stmt.query_map(params![scope.task,scope.host,scope.client], |row| Ok(hostlane_protocol::RollbackItem {change_id:row.get(0)?, host:row.get(1)?, path:row.get(2)?}))?.collect()
+        }).await
     }
 
     /// Notes on `host`'s ports, by port.
@@ -973,8 +1001,8 @@ impl Store {
 fn insert_call(conn: &Connection, call: &NewCall) -> Result<i64, rusqlite::Error> {
     conn.execute(
         "INSERT INTO calls (started_at, finished_at, client, session, host, method, params,
-         outcome, error_kind, error_message, result, approver, risk, verified)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+         outcome, error_kind, error_message, result, approver, risk, verified, task)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             call.started_at as i64,
             call.finished_at as i64,
@@ -990,6 +1018,7 @@ fn insert_call(conn: &Connection, call: &NewCall) -> Result<i64, rusqlite::Error
             call.approver,
             call.risk.map(|r| r.level() as i64),
             call.client.verified,
+            call.client.task,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -1026,6 +1055,10 @@ fn client_from_row(row: &Row, with_verified: bool) -> rusqlite::Result<ClientInf
     Ok(ClientInfo {
         name: row.get("client")?,
         session: row.get("session")?,
+        task: match row.as_ref().column_index("task") {
+            Ok(index) => row.get(index)?,
+            Err(_) => None,
+        },
         verified: with_verified && row.get::<_, Option<bool>>("verified")?.unwrap_or(false),
     })
 }

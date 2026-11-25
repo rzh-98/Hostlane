@@ -217,6 +217,22 @@ def main():
     expect("8000" in target.read_text(), "revert content")
     step("write, read, edit with hash check, revert")
 
+    tagged = {"HOSTLANE_TASK": "deploy-e2e", "HOSTLANE_SESSION": "review-e2e"}
+    note = str(remote / "rollback.txt")
+    hl("write", "test", note, stdin="one", env=tagged)
+    hl("edit", "test", note, "--old", "one", "--new", "two", env=tagged)
+    hl("exec", "test", "--", "echo recorded", env=tagged)
+    timeline = hl("timeline", "--task", "deploy-e2e")
+    expect(len(timeline) == 3 and timeline[0]["method"] == "files.write", f"timeline: {timeline}")
+    replay = hl("replay", "--session", "review-e2e", "--command", "1")
+    expect(replay["stdout"]["data"] == "recorded\n", f"replay: {replay}")
+    exported = hl("audit-export", "--task", "deploy-e2e")["data"].splitlines()
+    expect([json.loads(row)["id"] for row in exported] == [row["id"] for row in reversed(timeline)], "JSONL export")
+    plan = hl("rollback", "deploy-e2e")
+    expect(len(plan) == 2 and len(hl("rollback", "deploy-e2e", "--apply")["reverted"]) == 2, "task rollback")
+    expect(not (remote / "rollback.txt").exists() and not hl("rollback", "deploy-e2e"), "rollback must be resumable")
+    step("task timeline, replay, export and reverse-order file rollback")
+
     listing = hl("ls", "test", str(remote))
     expect(any(e["name"] == "app.conf" for e in listing["entries"]), f"ls: {listing}")
     found = hl("search", "test", "name = demo", str(remote), "-F")

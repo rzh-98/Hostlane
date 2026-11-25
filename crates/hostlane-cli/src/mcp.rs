@@ -685,6 +685,7 @@ impl Server {
             .with_info(ClientInfo {
                 name: client_name(),
                 session: Some(session_name(peer)),
+                task: crate::client_info().task,
                 verified: false,
             })
             .with_token(crate::client_token())

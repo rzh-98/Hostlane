@@ -301,6 +301,8 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）、`HOSTLANE_SESSION` 和
 
 ### Web 运维
 
+审计与回滚（M11）：可选的 `client.task` 来自 CLI/MCP 的 `HOSTLANE_TASK`，不替代会话 ID。schema v8 为调用、命令、文件修改保存任务标识；旧数据无需回填。`audit.list` 支持组合 `task`、`session`、`client`、`host`，CLI 分页导出或按开始时间排序。`files.rollback_plan` 返回指定任务尚未撤销的修改（最新在先），`rollback --apply` 逐条调用原有的 `files.revert`，不绕过审批、哈希校验或备份保留期。整个批次不是跨主机事务，失败后可以重新预览。回放只读取本地保留的输出，不在远端重新执行。
+
 - `hosts.profile`、`web.report` 只对已配置主机运行固定的只读命令，沿用 SSH 指纹校验、策略和审计。报告不主动从公网扫描，不申请 sudo，不返回代理配置原文。不可判断的防火墙状态显示为未知。解析范围为 `/etc/nginx/nginx.conf`、`conf.d/*.conf`、`sites-enabled/*` 和 `/etc/caddy/Caddyfile` 中的静态站点及上游。
 - `hosts.note {host, content}` 只允许用户保存备注（最多 16 KiB）；`hosts.export {host}` 返回 `content` 和 `markdown`。备注、健康检查配置复用 SQLite 的 `settings`，不改变数据库版本。
 - `health.set {host, port, interval_secs}` 由用户配置，间隔为 10–86400 秒，0 表示移除。`health.list` 返回最近一次状态。守护进程使用连接池探测服务器 `127.0.0.1` 上的 HTTP(S) `/`；2xx/3xx 为正常，连接、超时和响应异常会触发系统通知。同一故障不反复提醒，`HOSTLANE_NOTIFY=0` 禁用通知。

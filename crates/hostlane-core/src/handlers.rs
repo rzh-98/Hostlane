@@ -311,6 +311,7 @@ async fn run(
             let params: FileChangeParams = parse(params)?;
             to_value(files::revert(daemon, client, &params.change_id).await?)
         }
+        method::FILES_ROLLBACK_PLAN => to_value(daemon.store.rollback_plan(parse(params)?).await?),
         method::PORTS_LIST => to_value(ports::list(daemon, parse(params)?).await?),
         method::HOSTS_PROFILE => {
             to_value(crate::web::profile(daemon, parse::<HostParams>(params)?.host).await?)

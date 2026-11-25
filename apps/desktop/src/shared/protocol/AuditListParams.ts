@@ -4,7 +4,7 @@ import type { Risk } from "./Risk";
 /**
  * Params of `audit.list`.
  */
-export type AuditListParams = { host?: string, 
+export type AuditListParams = { session?: string, task?: string, host?: string, 
 /**
  * Client name, e.g. `cli`.
  */

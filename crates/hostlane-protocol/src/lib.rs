@@ -24,7 +24,9 @@ mod untrusted;
 mod web;
 pub use web::*;
 
-pub use audit::{AuditEntry, AuditList, AuditListParams, AuditOutcome};
+pub use audit::{
+    AuditEntry, AuditList, AuditListParams, AuditOutcome, RollbackItem, RollbackScope,
+};
 pub use clients::{
     ClientCreated, ClientNameParams, ClientsConfigureParams, ClientsList, RegisteredClient,
 };
@@ -113,6 +115,7 @@ pub mod method {
     pub const FILES_DOWNLOAD: &str = "files.download";
     pub const FILES_CHANGE: &str = "files.change";
     pub const FILES_REVERT: &str = "files.revert";
+    pub const FILES_ROLLBACK_PLAN: &str = "files.rollback_plan";
     pub const PORTS_LIST: &str = "ports.list";
     pub const PORTS_INSPECT: &str = "ports.inspect";
     pub const PORTS_CHECK: &str = "ports.check";
@@ -197,6 +200,7 @@ pub mod method {
 
     /// Every method the daemon currently implements.
     pub const ALL: &[&str] = &[
+        FILES_ROLLBACK_PLAN,
         HOSTS_PROFILE,
         HOSTS_EXPORT,
         HOSTS_NOTE,

@@ -15,6 +15,7 @@ import {
   EmptyState,
   FormRow,
   IconButton,
+  Input,
   List,
   ListItem,
   Notice,
@@ -136,6 +137,8 @@ export function AuditPage() {
   const online = phase === 'online'
   const [host, setHost] = useState(ANY)
   const [client, setClient] = useState(ANY)
+  const [groupBy, setGroupBy] = useState('session')
+  const [group, setGroup] = useState('')
   const [range, setRange] = useState<Range>(ANY)
   const [minRisk, setMinRisk] = useState<string>(ANY)
   const [entries, setEntries] = useState<AuditEntry[]>([])
@@ -156,6 +159,10 @@ export function AuditPage() {
       const params: AuditListParams = { limit: PAGE_SIZE, before_id: before }
       if (host !== ANY) params.host = host
       if (client !== ANY) params.client = client
+      if (group.trim()) {
+        if (groupBy === 'task') params.task = group.trim()
+        else params.session = group.trim()
+      }
       if (range !== ANY) params.since = Date.now() - ranges[range].ms
       if (minRisk !== ANY) params.min_risk = minRisk as Risk
       setLoading(true)
@@ -178,7 +185,7 @@ export function AuditPage() {
         return names.size === previous.length ? previous : [...names].sort()
       })
     },
-    [host, client, range, minRisk]
+    [host, client, range, minRisk, group, groupBy]
   )
 
   useEffect(() => {
@@ -206,7 +213,7 @@ export function AuditPage() {
     [entries, selectedId]
   )
 
-  const filtered = host !== ANY || client !== ANY || range !== ANY || minRisk !== ANY
+  const filtered = host !== ANY || client !== ANY || range !== ANY || minRisk !== ANY || !!group
 
   return (
     <Page>
@@ -263,6 +270,30 @@ export function AuditPage() {
           onClick={() => void load()}
         />
       </Toolbar>
+      <div className="flex items-center gap-2 border-b border-border px-page py-1">
+        <Select
+          aria-label="时间线分组"
+          value={groupBy}
+          onValueChange={setGroupBy}
+          options={[
+            { value: 'session', label: '会话时间线' },
+            { value: 'task', label: '任务时间线' }
+          ]}
+        />
+        <Input
+          aria-label="分组 ID"
+          placeholder="输入完整 ID"
+          value={group}
+          onChange={(event) => setGroup(event.target.value)}
+        />
+        {selected?.client[groupBy === 'task' ? 'task' : 'session'] && (
+          <Button
+            onClick={() => setGroup(selected.client[groupBy === 'task' ? 'task' : 'session'] ?? '')}
+          >
+            查看此组
+          </Button>
+        )}
+      </div>
 
       {online && error && (
         <Notice tone="danger" icon={<TriangleAlert />} onDismiss={() => setError(null)}>

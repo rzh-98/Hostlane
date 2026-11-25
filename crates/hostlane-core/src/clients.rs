@@ -181,6 +181,7 @@ mod tests {
         let claimed = ClientInfo {
             name: "desktop".into(),
             session: Some("s1".into()),
+            task: None,
             verified: true,
         };
         let who = clients

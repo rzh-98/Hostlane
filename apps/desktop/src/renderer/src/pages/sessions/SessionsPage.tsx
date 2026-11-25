@@ -240,6 +240,19 @@ interface TranscriptProps {
 function Transcript({ execs, outputs, showHost, showClient, onViewOutput }: TranscriptProps) {
   const scroller = useRef<HTMLDivElement>(null)
   const [following, setFollowing] = useState(true)
+  const [replaying, setReplaying] = useState(false)
+  const [position, setPosition] = useState(0)
+  const [playing, setPlaying] = useState(false)
+  const index = Math.min(position, Math.max(execs.length - 1, 0))
+  useEffect(() => {
+    if (!replaying || !playing) return
+    if (index + 1 >= execs.length) {
+      setPlaying(false)
+      return
+    }
+    const timer = window.setTimeout(() => setPosition(index + 1), 2000)
+    return () => window.clearTimeout(timer)
+  }, [index, playing, replaying, execs.length])
 
   useLayoutEffect(() => {
     const node = scroller.current
@@ -247,7 +260,41 @@ function Transcript({ execs, outputs, showHost, showClient, onViewOutput }: Tran
   })
 
   return (
-    <div className="relative min-w-0 flex-1">
+    <div className="relative flex min-w-0 flex-1 flex-col">
+      <div className="flex items-center gap-2 border-b border-border px-page py-1">
+        <Button
+          disabled={!execs.length}
+          onClick={() => {
+            setReplaying(!replaying)
+            setPosition(0)
+            setPlaying(false)
+          }}
+        >
+          {replaying ? '返回实时视图' : '按命令回放'}
+        </Button>
+        {replaying && (
+          <>
+            <select
+              aria-label="跳转到命令"
+              value={index}
+              onChange={(event) => {
+                setPosition(Number(event.target.value))
+                setPlaying(false)
+              }}
+              className="min-w-0 max-w-64 bg-control"
+            >
+              {execs.map((exec, number) => (
+                <option key={exec.id} value={number}>
+                  {number + 1}. {exec.command}
+                </option>
+              ))}
+            </select>
+            <Button disabled={index + 1 >= execs.length} onClick={() => setPlaying(!playing)}>
+              {playing ? '暂停' : '播放'}
+            </Button>
+          </>
+        )}
+      </div>
       <div
         ref={scroller}
         onScroll={(event) => {
@@ -258,7 +305,7 @@ function Transcript({ execs, outputs, showHost, showClient, onViewOutput }: Tran
         aria-live="off"
       >
         <div className="flex flex-col divide-y divide-border">
-          {execs.map((exec) => (
+          {(replaying ? execs.slice(index, index + 1) : execs).map((exec) => (
             <ExecBlock
               key={exec.id}
               exec={exec}
