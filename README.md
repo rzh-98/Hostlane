@@ -401,7 +401,7 @@ No, by design. The session monitor is read-only so that everything that happens 
 <details>
 <summary>Can I log in with a password, or with a key that has a passphrase?</summary>
 
-Yes. Save it once with `hostlane secret set <host> --password` (or `--passphrase`), or from the host's page in the desktop app. Hostlane keeps it in the system keychain and uses it only after ssh-agent and key files fail. On Linux this needs a Secret Service provider such as GNOME Keyring or KeePassXC.
+Yes. Run `hostlane secret set <host> --password` (or `--passphrase`) in a local terminal. The hidden prompt keeps credentials out of the desktop renderer. The host page shows the command and lets you check or remove saved entries. On Linux, the system keychain requires a Secret Service provider.
 
 </details>
 

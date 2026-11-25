@@ -74,7 +74,7 @@ Electron 主进程 ◄─IPC─ 渲染进程（沙箱）────────
   2. 私钥文件。加密的私钥用钥匙串中保存的口令解开；没有保存口令时跳过。
   3. 已保存的登录密码：先试 `password`，再试 `keyboard-interactive`（每个提示都回答这个密码）。
 - 全部失败时返回 `AUTH_FAILED`，`details`（`AuthFailure`）列出服务器还接受的认证方式、缺少口令的密钥、试过的密钥数量和是否保存了密码，`hint` 给出对应的 `hostlane secret set` 命令。
-- 密码和口令保存在系统钥匙串中（macOS 钥匙串、Linux Secret Service、Windows 凭据管理器），服务名为 `Hostlane`，账户名为 `password/<主机>` 或 `passphrase/<密钥的绝对路径>`；同一个密钥的口令由所有使用它的主机共用。SQLite 的 `secrets` 表只记录保存了哪些凭据和保存时间。凭据不会出现在任何方法的结果、审计日志和守护进程日志中：`secrets.set` 的 `secret` 在审计中记为 `<redacted>`，守护进程用完即清零（`zeroize`）。桌面端把输入框中的密码直接通过 IPC 发给守护进程，渲染进程不保存。`HOSTLANE_SECRET_STORE=file` 改用 `<数据目录>/secrets.json`（权限 0600，明文），只供测试使用。
+- 密码和口令保存在系统钥匙串中（macOS 钥匙串、Linux Secret Service、Windows 凭据管理器），服务名为 `Hostlane`，账户名为 `password/<主机>` 或 `passphrase/<密钥的绝对路径>`。SQLite 的 `secrets` 表只记录凭据清单和保存时间。请在本机终端用 `hostlane secret set` 的隐藏提示录入。渲染进程仅显示操作指引和清单，IPC 不允许它调用 `secrets.set`。审计只记录 `<redacted>`。`HOSTLANE_SECRET_STORE=file` 使用明文文件，仅供隔离测试使用。
 - `hostlane daemon start` 会以独立进程组在后台启动 `hostlane daemon run`，日志写入 `<数据目录>/daemon.log`，等到 socket 能响应后才返回。
 - 桌面端启动时，如果守护进程没有运行，会调用 `hostlane daemon start`。关闭桌面端不会停止守护进程。
 - `hostlane daemon install` 把守护进程注册为用户级服务：macOS 写入 `~/Library/LaunchAgents/com.hostlane.daemon.plist` 并 `launchctl bootstrap`（`RunAtLoad`，`KeepAlive` 只在非 0 退出时重启）；Linux 写入 `~/.config/systemd/user/hostlane.service` 并 `enable` + `restart`（`Restart=on-failure`）。服务文件记录当前二进制的绝对路径和当时设置的 `HOSTLANE_SOCKET`、`HOSTLANE_DATA_DIR`、`HOSTLANE_SSH_CONFIG`、`HOSTLANE_NOTIFY`。正在运行的守护进程会先被停止，再由服务接管。`--print` 只输出服务文件。

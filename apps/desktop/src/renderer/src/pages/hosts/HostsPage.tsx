@@ -123,7 +123,6 @@ export function HostsPage() {
   const [hostDialogError, setHostDialogError] = useState<string | null>(null)
   const [removing, setRemoving] = useState<Host | null>(null)
   const [secretTarget, setSecretTarget] = useState<SecretTarget | null>(null)
-  const [secretError, setSecretError] = useState<string | null>(null)
   const [deletingSecret, setDeletingSecret] = useState<SavedSecret | null>(null)
 
   const load = useCallback(async () => {
@@ -252,30 +251,6 @@ export function HostsPage() {
     void load()
   }
 
-  const saveSecret = async (secret: string, keyPath: string | undefined) => {
-    if (!secretTarget) return
-    const target = secretTarget
-    setBusyHost(target.host)
-    setSecretError(null)
-    const reply = await callHostlane<SecretChanged>('secrets.set', {
-      host: target.host,
-      kind: target.kind,
-      secret,
-      key_path: keyPath
-    })
-    setBusyHost(null)
-    if (!reply.ok) {
-      setSecretError(reply.error.message)
-      return
-    }
-    setSecretTarget(null)
-    setFeedback({
-      tone: 'success',
-      text: `已保存${describeSecret(reply.result.secret)}到系统钥匙串`
-    })
-    void load()
-  }
-
   const deleteSecret = async (secret: SavedSecret, host: string) => {
     setBusyHost(host)
     const reply = await callHostlane<SecretChanged>('secrets.delete', {
@@ -293,8 +268,7 @@ export function HostsPage() {
   }
 
   const askSecret = (host: Host, kind: SecretTarget['kind']) => {
-    setSecretError(null)
-    setSecretTarget({ host: host.id, kind, keyFiles: host.identity_files })
+    setSecretTarget({ host: host.id, kind })
   }
 
   const visible = useMemo(() => {
@@ -490,10 +464,10 @@ export function HostsPage() {
       />
       <SecretDialog
         target={secretTarget}
-        busy={secretTarget !== null && busyHost === secretTarget.host}
-        error={secretError}
-        onOpenChange={(open) => !open && setSecretTarget(null)}
-        onSubmit={(secret, keyPath) => void saveSecret(secret, keyPath)}
+        onClose={() => {
+          setSecretTarget(null)
+          void load()
+        }}
       />
       <ConfirmDialog
         open={removing !== null}

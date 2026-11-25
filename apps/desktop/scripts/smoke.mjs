@@ -109,17 +109,25 @@ try {
       expression: `JSON.stringify({
         title: document.title,
         mounted: (document.getElementById('root')?.childElementCount ?? 0) > 0,
-        demo: document.body.innerText.includes('demo')
+        demo: document.body?.innerText.includes('demo') ?? false
       })`,
       returnByValue: true
     })
-    state = JSON.parse(result.value)
-    if (state.mounted && state.demo) break
+    state = typeof result.value === 'string' ? JSON.parse(result.value) : null
+    if (state?.mounted && state.demo) break
     await sleep(500)
   }
   console.log(`Renderer state: ${JSON.stringify(state)}`)
   if (!state?.mounted) throw new Error('Renderer did not mount')
   if (!state.demo) throw new Error('Hosts page did not show the host from ssh_config')
+
+  const denied = await cdp.send('Runtime.evaluate', {
+    expression: `window.desktop.hostlane.call('secrets.set', {}).then(reply => reply.error?.kind)`,
+    awaitPromise: true,
+    returnByValue: true
+  })
+  if (denied.result.value !== 'METHOD_NOT_FOUND')
+    throw new Error('Renderer credential IPC is not blocked')
 
   const status = daemonStatus(hostlane, env)
   console.log(`Daemon status: ${JSON.stringify(status)}`)

@@ -28,7 +28,6 @@ export const RENDERER_METHODS = [
   'hosts.update',
   'hosts.remove',
   'secrets.list',
-  'secrets.set',
   'secrets.delete',
   'connections.list',
   'exec.list',

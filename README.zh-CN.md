@@ -401,7 +401,7 @@ cargo build --release -p hostlane-cli && python3 scripts/bench.py
 <details>
 <summary>能用密码登录，或使用带口令的私钥吗？</summary>
 
-可以。用 `hostlane secret set <host> --password`（或 `--passphrase`）保存一次，也可以在桌面端的主机页保存。Hostlane 把它存在系统钥匙串中，只在 ssh-agent 和私钥文件都无法登录时使用。Linux 上需要 Secret Service（例如 GNOME Keyring 或 KeePassXC）。
+可以。在本机终端运行 `hostlane secret set <host> --password`（或 `--passphrase`），在隐藏提示中输入，凭据不会经过桌面渲染进程。主机页提供命令，可查看或删除已保存的凭据条目。Linux 上的系统钥匙串需要 Secret Service。
 
 </details>
 
