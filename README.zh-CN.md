@@ -6,7 +6,7 @@
   <p>不内置 LLM；服务器端不需要安装任何组件，只要有 <code>sshd</code>。</p>
   <p>
     <a href="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml/badge.svg" /></a>
-    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M6)-orange" />
+    <img alt="Status" src="https://img.shields.io/badge/status-v1.0_release_candidate-blue" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -23,7 +23,7 @@
 </div>
 
 > [!WARNING]
-> Hostlane 仍处于早期开发阶段，支持 [Web 运维](#web-运维)、任务回滚和 Windows 本机运行时。目前还没有签名发布版，见[路线图](#路线图)。
+> **1.0.0-rc.1 是候选版，不是已签名的正式版。** 本版包含 [Web 运维](#web-运维)、任务回滚和 Windows 本机运行时。目前需要手动升级，尚不支持自动更新或通过 Homebrew 安装。见[路线图](#路线图)。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />

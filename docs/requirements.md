@@ -202,4 +202,4 @@ agent 侧对应的工具包括：`ports_list`、`port_inspect`、`port_check`、
 | **M12 Windows**（已完成） | 用户专属命名管道和 ACL、Windows OpenSSH agent、任务计划程序登录启动、后台启动、用户 PATH 设置 |
 | **V1.0 发布** | 代码签名和公证、自动更新、Homebrew |
 
-M10 之后的顺序按实际使用中最常用的场景决定。
+当前准备版本为 `1.0.0-rc.1`。候选版先通过三平台 CI 和打包冒烟测试；可以在 `main` 上手动运行 Release 工作流领取测试安装包，不会创建 GitHub Release。正式发布前仍需验证签名与公证、从旧版升级、自动更新及 Homebrew 安装。

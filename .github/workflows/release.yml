@@ -50,6 +50,14 @@ jobs:
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
 
+      - name: Verify desktop, CLI and tag versions
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          cli=$(cargo metadata --locked --no-deps --format-version 1 | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).packages.find(p => p.name === 'hostlane-cli').version")
+          test "$version" = "$cli"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then test "$GITHUB_REF_NAME" = "v$version"; fi
+
       - name: Install
         run: npm ci
 

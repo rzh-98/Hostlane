@@ -6,7 +6,7 @@
   <p>No built-in LLM. Nothing to install on the server: <code>sshd</code> is enough.</p>
   <p>
     <a href="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml/badge.svg" /></a>
-    <img alt="Status" src="https://img.shields.io/badge/status-early_development_(M6)-orange" />
+    <img alt="Status" src="https://img.shields.io/badge/status-v1.0_release_candidate-blue" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -23,7 +23,7 @@
 </div>
 
 > [!WARNING]
-> Hostlane is in early development. Features include [web operations](#web-operations), task rollback and a Windows runtime. There are no signed releases yet. See the [roadmap](#roadmap).
+> **1.0.0-rc.1 is a release candidate, not a signed stable release.** It includes [web operations](#web-operations), task rollback and the Windows runtime. Upgrade manually; automatic updates and Homebrew distribution are not available yet. See the [roadmap](#roadmap).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
