@@ -75,7 +75,7 @@ pub fn user_sid() -> io::Result<String> {
     }
 }
 
-fn local(path: &Path) -> io::Result<()> {
+pub(crate) fn local(path: &Path) -> io::Result<()> {
     if !path
         .to_string_lossy()
         .strip_prefix(r"\\.\pipe\")
@@ -152,7 +152,7 @@ pub async fn connect(path: &Path) -> io::Result<NamedPipeClient> {
             return Err(io::Error::from_raw_os_error(code as i32));
         }
         let _owned = LocalAllocation(descriptor);
-        if owner == null_mut() || sid_string(owner)? != user_sid()? {
+        if owner.is_null() || sid_string(owner)? != user_sid()? {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "named pipe is not owned by the current user",
@@ -160,4 +160,50 @@ pub async fn connect(path: &Path) -> io::Result<NamedPipeClient> {
         }
     }
     Ok(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows_sys::Win32::Security::{ACCESS_ALLOWED_ACE, DACL_SECURITY_INFORMATION, GetAce};
+
+    #[tokio::test]
+    async fn pipe_only_grants_access_to_current_user() -> io::Result<()> {
+        assert!(local(Path::new(r"\\remote\pipe\test")).is_err());
+        let path = std::path::PathBuf::from(format!(
+            r"\\.\pipe\hostlane-test-{}",
+            crate::util::new_id("acl")
+        ));
+        let server = listener(&path, true)?;
+        assert!(listener(&path, true).is_err());
+        let client = connect(&path).await?;
+        server.connect().await?;
+        unsafe {
+            let mut descriptor = null_mut();
+            let mut acl = null_mut();
+            let code = GetSecurityInfo(
+                client.as_raw_handle(),
+                SE_KERNEL_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                null_mut(),
+                null_mut(),
+                &mut acl,
+                null_mut(),
+                &mut descriptor,
+            );
+            assert_eq!(code, 0);
+            let _owned = LocalAllocation(descriptor);
+            assert!(!acl.is_null());
+            assert_eq!((*acl).AceCount, 1);
+            let mut ace = null_mut();
+            assert_ne!(GetAce(acl, 0, &mut ace), 0);
+            let allowed = ace.cast::<ACCESS_ALLOWED_ACE>();
+            assert_eq!((*allowed).Header.AceType, 0);
+            assert_eq!(
+                sid_string(std::ptr::addr_of_mut!((*allowed).SidStart).cast())?,
+                user_sid()?
+            );
+        }
+        Ok(())
+    }
 }

@@ -652,7 +652,15 @@ async fn subject(
 
 /// Identifies "the same call" for tickets: caller, method and params.
 fn fingerprint(client: &ClientInfo, name: &str, params: &Value) -> String {
-    let text = json!([client.name, client.session, name, params]).to_string();
+    let text = json!([
+        client.name,
+        client.session,
+        client.task,
+        client.verified,
+        name,
+        params
+    ])
+    .to_string();
     sha256_hex(text.as_bytes())
 }
 
@@ -964,6 +972,18 @@ mod tests {
         assert_eq!(options.wait, Some(MAX_WAIT));
         assert_eq!(params, json!({ "host": "web", "command": "ls" }));
         assert!(GateOptions::take(&mut json!({ "async": "yes" })).is_err());
+    }
+
+    #[test]
+    fn tickets_bind_to_the_task_and_identity_presented_for_approval() {
+        let mut caller = ClientInfo::new("agent");
+        let params = json!({"change_id":"change"});
+        let ticket = fingerprint(&caller, "files.revert", &params);
+        caller.task = Some("another-task".into());
+        assert_ne!(ticket, fingerprint(&caller, "files.revert", &params));
+        caller.task = None;
+        caller.verified = true;
+        assert_ne!(ticket, fingerprint(&caller, "files.revert", &params));
     }
 
     #[test]

@@ -361,7 +361,9 @@ impl Jobs {
             approver,
         };
         let recorded = serde_json::to_value(&params).unwrap_or(Value::Null);
-        self.store.insert_job(job.clone(), recorded).await?;
+        self.store
+            .insert_job(job.clone(), crate::exec::redact_params(&recorded))
+            .await?;
         self.events.publish(Event::Job { job: job.clone() });
         Ok(job)
     }

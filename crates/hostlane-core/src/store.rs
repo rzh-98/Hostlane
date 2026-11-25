@@ -983,7 +983,9 @@ impl Store {
                         client: record.client.clone(),
                         host: Some(record.host.clone()),
                         method: hostlane_protocol::method::EXEC_RUN.into(),
-                        params: serde_json::from_str(params).unwrap_or(Value::Null),
+                        params: crate::handlers::redact_params(
+                            &serde_json::from_str(params).unwrap_or(Value::Null),
+                        ),
                         outcome: AuditOutcome::Interrupted,
                         error: None,
                         result: json!({ "output_id": record.id }),
@@ -1039,7 +1041,7 @@ fn call_from_row(row: &Row) -> rusqlite::Result<AuditEntry> {
         client: client_from_row(row, true)?,
         host: row.get("host")?,
         method: row.get("method")?,
-        params: json_column(row, "params")?,
+        params: crate::handlers::redact_params(&json_column(row, "params")?),
         outcome: enum_parse(&outcome).unwrap_or(AuditOutcome::Error),
         error_kind: error_kind.as_deref().and_then(enum_parse),
         error_message: row.get("error_message")?,
@@ -1206,13 +1208,24 @@ mod tests {
             stderr_bytes: 0,
             approver: Some("desktop".into()),
         };
-        store.insert_exec(record, json!({})).await.unwrap();
+        store
+            .insert_exec(record, json!({"env":{"EXAMPLE":"legacy-value"}}))
+            .await
+            .unwrap();
         assert_eq!(store.recover_interrupted(20).await.unwrap(), 1);
         let exec = store.get_exec("ex-1".into()).await.unwrap().unwrap();
         assert_eq!(exec.status, ExecStatus::Interrupted);
         assert_eq!(exec.approver.as_deref(), Some("desktop"));
         let audit = store.list_calls(AuditListParams::default()).await.unwrap();
         assert_eq!(audit.entries[0].outcome, AuditOutcome::Interrupted);
+        let stored: String = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT params FROM calls", [], |row| row.get(0))
+            .unwrap();
+        assert!(!stored.contains("legacy-value"));
+        assert_eq!(audit.entries[0].params["env"]["EXAMPLE"], "<redacted>");
     }
 
     #[tokio::test]

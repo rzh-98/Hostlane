@@ -7,7 +7,9 @@ Starts sshd on 127.0.0.1 (port $E2E_PORT, default 2222); see testbed.py. Set E2E
 keep the temporary directory.
 """
 
+import csv
 import http.server
+import io
 import json
 import shutil
 import socket
@@ -221,17 +223,33 @@ def main():
     note = str(remote / "rollback.txt")
     hl("write", "test", note, stdin="one", env=tagged)
     hl("edit", "test", note, "--old", "one", "--new", "two", env=tagged)
-    hl("exec", "test", "--", "echo recorded", env=tagged)
+    hl("exec", "test", "--env", "HL_SAMPLE=e2e-private-value", "--", 'test -n "$HL_SAMPLE" && echo recorded', env=tagged)
     timeline = hl("timeline", "--task", "deploy-e2e")
     expect(len(timeline) == 3 and timeline[0]["method"] == "files.write", f"timeline: {timeline}")
     replay = hl("replay", "--session", "review-e2e", "--command", "1")
     expect(replay["stdout"]["data"] == "recorded\n", f"replay: {replay}")
     exported = hl("audit-export", "--task", "deploy-e2e")["data"].splitlines()
     expect([json.loads(row)["id"] for row in exported] == [row["id"] for row in reversed(timeline)], "JSONL export")
+    csv_export = hl("audit-export", "--format", "csv", "--task", "deploy-e2e")["data"]
+    csv_rows = list(csv.DictReader(io.StringIO(csv_export)))
+    expect([int(row['id']) for row in csv_rows] == [row['id'] for row in reversed(timeline)], "CSV export order")
+    expect(json.loads(csv_rows[0]['params'])['env']['HL_SAMPLE'] == '<redacted>' and 'e2e-private-value' not in csv_export + ''.join(exported), "environment value in audit export")
     plan = hl("rollback", "deploy-e2e")
     expect(len(plan) == 2 and len(hl("rollback", "deploy-e2e", "--apply")["reverted"]) == 2, "task rollback")
     expect(not (remote / "rollback.txt").exists() and not hl("rollback", "deploy-e2e"), "rollback must be resumable")
     step("task timeline, replay, export and reverse-order file rollback")
+
+    older, newer = remote / "older.txt", remote / "newer.txt"
+    older_change = hl("write", "test", str(older), stdin="original", env=tagged)
+    hl("write", "test", str(newer), stdin="recent", env=tagged)
+    older.write_text("external update")
+    expect(hl_error("rollback", "deploy-e2e", "--apply")["kind"] == "FILE_CHANGED", "batch must stop on conflict")
+    expect(not newer.exists() and older.read_text() == "external update", "rollback overwrote a conflict")
+    remaining = hl("rollback", "deploy-e2e")
+    expect([item['change_id'] for item in remaining] == [older_change['change_id']], f"incorrect remaining plan: {remaining}")
+    older.write_text("original")
+    expect(len(hl("rollback", "deploy-e2e", "--apply")["reverted"]) == 1 and not older.exists(), "resume after conflict")
+    step("partial rollback preserves external changes and resumes from the remaining item")
 
     listing = hl("ls", "test", str(remote))
     expect(any(e["name"] == "app.conf" for e in listing["entries"]), f"ls: {listing}")

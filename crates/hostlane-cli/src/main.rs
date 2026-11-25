@@ -1098,7 +1098,7 @@ pub(crate) async fn ensure_daemon(
         return Ok((false, status));
     }
     let log_path = paths::log_path();
-    if service::start().unwrap_or(false) {
+    if service::start(socket.as_deref()).unwrap_or(false) {
         for _ in 0..50 {
             tokio::time::sleep(Duration::from_millis(100)).await;
             if let Ok(status) = client

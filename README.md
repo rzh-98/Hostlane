@@ -183,6 +183,8 @@ Health checks use HTTP(S) on server loopback, notify on entry into failure, and 
 
 Set `HOSTLANE_TASK` for a unit of work and `HOSTLANE_SESSION` for a conversation. Inspect it with `hostlane timeline --task deploy` or `hostlane replay --session review --command 2` (1-based, reads recorded stdout/stderr, never reruns commands). `hostlane audit-export --format csv > audit.csv` exports all pages; JSONL is the default. `hostlane rollback deploy` previews the files, and `--apply` reverts them newest first. Use `--host` or `--client` to narrow the task. Each revert retains its policy checks; a conflict stops the batch without undoing successful reverts.
 
+Environment values supplied via `--env` are masked in new audit records and when exporting older records. This does not erase old database files or exports. Review command text and paths before sharing an export; they may contain secrets entered literally.
+
 ### Windows
 
 Run `hostlane.exe daemon start` for a background daemon; `daemon install` registers a least-privilege login task for the current user. The desktop app bundles the binary. Under Integrations, add it to your user PATH, then sign out and back in. OpenSSH agent keys use the Windows `ssh-agent` service if enabled. This supports Windows as the **local client**; remote web operations still expect Unix server tools.
@@ -348,7 +350,7 @@ python3 scripts/e2e.py
 cargo build --release -p hostlane-cli && python3 scripts/bench.py
 ```
 
-- CI (`.github/workflows/ci.yml`) runs the checks, the end-to-end test on Linux and macOS, and a Windows build check. Pushing a `v*` tag builds unsigned installers and CLI archives and publishes a GitHub Release. See [Testing and CI](docs/architecture.md#测试与-ci).
+- CI runs the checks, SSH end-to-end tests on Linux and macOS, and native pipe, login-task and packaged desktop smoke tests on Windows. Pushing a `v*` tag builds unsigned installers and CLI archives and publishes a GitHub Release. See [Testing and CI](docs/architecture.md#测试与-ci).
 - Adding a JSON-RPC method takes five steps; see [Adding a method](docs/architecture.md#新增一个方法).
 - The desktop UI follows the [design system](apps/desktop/docs/design-system.md). `ui/` and `layout/` contain no product code.
 - The socket path rules live in both `crates/hostlane-core/src/paths.rs` and `apps/desktop/src/main/paths.ts`. Keep them in sync.

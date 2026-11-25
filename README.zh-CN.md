@@ -183,6 +183,8 @@ hostlane web forwards
 
 用 `HOSTLANE_TASK` 标记一次任务，`HOSTLANE_SESSION` 标记一次会话。`hostlane timeline --task deploy` 查看时间线；`hostlane replay --session review --command 2` 查看第 2 条命令的历史输出，不重新执行。`hostlane audit-export --format csv > audit.csv` 导出全部分页，默认格式为 JSONL。先用 `hostlane rollback deploy` 预览，再加 `--apply` 从新到旧逐项撤销。可加 `--host` 或 `--client` 缩小范围。每项都经过策略和内容哈希检查；遇到冲突停止，已撤销项不重复处理。
 
+通过 `--env` 传入的环境变量值在新审计记录及旧记录的导出中会脱敏，但不会擦除旧数据库或已生成的导出。分享前仍需检查命令原文和路径，其中可能有直接输入的敏感信息。
+
 ### Windows
 
 运行 `hostlane.exe daemon start` 启动后台守护进程；`daemon install` 注册当前用户登录时运行的最低权限任务。桌面端内置二进制，接入页可以将它加入用户 PATH，重新登录后生效。启用 Windows OpenSSH 的 `ssh-agent` 服务后即可使用其中的密钥。这里支持的是 **Windows 本机客户端**；远程 Web 运维仍面向 Unix 服务器。
@@ -348,7 +350,7 @@ python3 scripts/e2e.py
 cargo build --release -p hostlane-cli && python3 scripts/bench.py
 ```
 
-- CI（`.github/workflows/ci.yml`）运行上述检查、Linux 和 macOS 上的端到端测试，以及 Windows 编译检查。推送 `v*` tag 会构建未签名的安装包和 CLI 压缩包，并发布 GitHub Release。见[测试与 CI](docs/architecture.md#测试与-ci)。
+- CI 运行上述检查、Linux 和 macOS 上的 SSH 端到端测试，以及 Windows 原生命名管道、登录任务和打包桌面端的冒烟测试。推送 `v*` tag 会构建未签名的安装包和 CLI 压缩包，并发布 GitHub Release。见[测试与 CI](docs/architecture.md#测试与-ci)。
 - 新增一个 JSON-RPC 方法需要五步，见[新增一个方法](docs/architecture.md#新增一个方法)。
 - 桌面端 UI 遵循[设计系统](apps/desktop/docs/design-system.zh-CN.md)；`ui/` 和 `layout/` 中不放业务代码。
 - socket 路径规则同时存在于 `crates/hostlane-core/src/paths.rs` 和 `apps/desktop/src/main/paths.ts`，修改时两边保持一致。

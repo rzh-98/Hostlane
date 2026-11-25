@@ -368,12 +368,13 @@ async fn connect_agent(entry: &Entry) -> Option<AgentClient<AgentStream>> {
 async fn connect_agent(entry: &Entry) -> Option<AgentClient<AgentStream>> {
     let pipe = match entry.options.identity_agent.as_deref() {
         Some(value) if value.eq_ignore_ascii_case("none") => return None,
+        Some(value) if value.starts_with('$') => std::env::var(&value[1..]).ok()?,
         Some(value) if value != "SSH_AUTH_SOCK" => value.to_string(),
         _ => {
             std::env::var("SSH_AUTH_SOCK").unwrap_or_else(|_| r"\\.\pipe\openssh-ssh-agent".into())
         }
     };
-    if !pipe.starts_with(r"\\.\pipe\") {
+    if crate::windows_pipe::local(Path::new(&pipe)).is_err() {
         return None;
     }
     tokio::time::timeout(
@@ -388,6 +389,24 @@ async fn connect_agent(entry: &Entry) -> Option<AgentClient<AgentStream>> {
 #[cfg(not(any(unix, windows)))]
 async fn connect_agent(_entry: &Entry) -> Option<AgentClient<AgentStream>> {
     None
+}
+
+#[cfg(all(test, windows))]
+#[tokio::test]
+#[ignore = "requires a disposable identity loaded into the Windows OpenSSH service"]
+async fn windows_openssh_agent_signs_with_fixture_key() {
+    let public =
+        russh::keys::load_public_key(std::env::var_os("HOSTLANE_TEST_PUBLIC_KEY").unwrap())
+            .unwrap();
+    let entry = crate::ssh_config::Loaded::default().resolve_name("agent-test");
+    let mut agent = connect_agent(&entry)
+        .await
+        .expect("connect to local ssh-agent");
+    assert!(agent.request_identities().await.unwrap().iter().any(|identity| matches!(identity, AgentIdentity::PublicKey { key, .. } if key.key_data() == public.key_data())));
+    agent
+        .sign_request_signature(&public, None, b"Hostlane native agent smoke test")
+        .await
+        .unwrap();
 }
 
 /// Remembers which methods the server still offers after a failed attempt.

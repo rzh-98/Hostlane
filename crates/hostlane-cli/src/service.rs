@@ -124,7 +124,7 @@ fn sid() -> Result<String> {
 }
 
 fn task_name() -> Result<String> {
-    Ok(format!("Hostlane-{}", sid()?))
+    Ok(format!("Hostlane-{}-{}", sid()?, paths::data_dir_id()))
 }
 
 fn task_xml_for(def: &Definition, user: &str) -> String {
@@ -395,9 +395,20 @@ pub struct Installed {
     pub restarted: bool,
 }
 
+fn service_bytes(manager: Manager, def: &Definition) -> Result<Vec<u8>> {
+    Ok(match manager {
+        Manager::Scheduler => std::iter::once(0xfeff)
+            .chain(task_xml(def)?.encode_utf16())
+            .flat_map(u16::to_le_bytes)
+            .collect(),
+        Manager::Launchd => launchd_plist(def).into_bytes(),
+        Manager::Systemd => systemd_unit(def).into_bytes(),
+    })
+}
+
 pub async fn install(client: &Client, def: &Definition) -> Result<Installed> {
     let Some(manager) = Manager::current() else {
-        bail!("a background service is only supported on macOS (launchd) and Linux (systemd)")
+        bail!("no supported user service manager on this platform")
     };
     let path = manager.file();
     if let Some(dir) = path.parent() {
@@ -406,23 +417,11 @@ pub async fn install(client: &Client, def: &Definition) -> Result<Installed> {
     if let Some(dir) = def.log.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let content = match manager {
-        Manager::Scheduler => task_xml(def)?,
-        Manager::Launchd => launchd_plist(def),
-        Manager::Systemd => systemd_unit(def),
-    };
+    let bytes = service_bytes(manager, def)?;
     if manager == Manager::Launchd {
         let domain = gui_domain()?;
         let _ = run("launchctl", &["bootout", &format!("{domain}/{LABEL}")]);
     }
-    let bytes = if manager == Manager::Scheduler {
-        std::iter::once(0xfeff)
-            .chain(content.encode_utf16())
-            .flat_map(u16::to_le_bytes)
-            .collect()
-    } else {
-        content.into_bytes()
-    };
     std::fs::write(&path, bytes).with_context(|| format!("cannot write {}", path.display()))?;
     let restarted = stop_running(client).await?;
     match manager {
@@ -467,12 +466,22 @@ pub async fn install(client: &Client, def: &Definition) -> Result<Installed> {
 }
 
 /// Starts the installed service; `false` if none is installed.
-pub fn start() -> Result<bool> {
+pub fn start(socket: Option<&Path>) -> Result<bool> {
     let Some(manager) = Manager::current() else {
         return Ok(false);
     };
     if !manager.file().exists() {
         return Ok(false);
+    }
+    if socket.is_some()
+        || ENV_VARS[..3]
+            .iter()
+            .any(|name| std::env::var_os(name).is_some())
+    {
+        let def = Definition::current(socket)?;
+        if std::fs::read(manager.file())? != service_bytes(manager, &def)? {
+            return Ok(false);
+        }
     }
     match manager {
         Manager::Scheduler => check(&scheduler(), &["/Run", "/TN", &task_name()?])?,
@@ -535,6 +544,23 @@ mod tests {
             env: vec![("HOSTLANE_DATA_DIR".into(), "/tmp/a b%".into())],
             log: PathBuf::from("/tmp/hl/daemon.log"),
         }
+    }
+
+    #[test]
+    fn scheduler_uses_quoted_arguments_and_unprivileged_principal() {
+        let mut def = definition();
+        def.args
+            .extend(["--socket".into(), r"\\.\pipe\with & spaces".into()]);
+        let task = task_xml_for(&def, "S-1-5-21-1");
+        assert_eq!(
+            installed_binary(Manager::Scheduler, &task).as_deref(),
+            def.binary.to_str()
+        );
+        assert!(task.contains(r#""--socket" "\\.\pipe\with &amp; spaces""#));
+        assert!(task.contains(
+            "<LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel>"
+        ));
+        assert!(!task.contains("<Password>"));
     }
 
     #[test]

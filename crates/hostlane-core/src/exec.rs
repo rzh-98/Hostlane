@@ -199,9 +199,14 @@ async fn open_private(path: &Path) -> std::io::Result<tokio::fs::File> {
     options.open(path).await
 }
 
-/// Params as recorded in the audit log and exec table: `stdin` is replaced by its size.
+/// Preserve stdin length and environment names, never their values.
 pub fn redact_params(params: &Value) -> Value {
     let mut params = params.clone();
+    if let Some(env) = params.get_mut("env").and_then(Value::as_object_mut) {
+        for value in env.values_mut() {
+            *value = Value::String("<redacted>".into());
+        }
+    }
     if let Some(stdin) = params.get("stdin").and_then(Value::as_str) {
         let size = stdin.len();
         params["stdin"] = serde_json::json!({ "bytes": size });
@@ -565,8 +570,13 @@ mod tests {
     }
 
     #[test]
-    fn redacts_stdin() {
-        let params = serde_json::json!({ "command": "cat", "stdin": "secret" });
-        assert_eq!(redact_params(&params)["stdin"]["bytes"], 6);
+    fn redacts_stdin_and_environment_idempotently() {
+        let params =
+            serde_json::json!({ "command": "cat", "stdin": "secret", "env": {"MODE": "canary"} });
+        let recorded = redact_params(&params);
+        assert_eq!(recorded["stdin"]["bytes"], 6);
+        assert_eq!(recorded["env"]["MODE"], "<redacted>");
+        assert_eq!(redact_params(&recorded), recorded);
+        assert_eq!(params["env"]["MODE"], "canary");
     }
 }

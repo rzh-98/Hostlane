@@ -52,7 +52,7 @@ Hostlane/
 │  ├─ testbed.py                在 127.0.0.1 上起一个临时 sshd，并把 HOSTLANE_* 指向临时目录
 │  ├─ e2e.py                    用 CLI 和 MCP 跑一遍完整流程（CI 中运行）
 │  └─ bench.py                  性能实测
-├─ .github/workflows/            ci.yml（检查、端到端测试、Windows 编译检查）、release.yml（打 tag 发布）
+├─ .github/workflows/            ci.yml（检查、端到端测试、Windows 原生冒烟测试）、release.yml（打 tag 发布）
 └─ docs/
 ```
 
@@ -80,7 +80,7 @@ Electron 主进程 ◄─IPC─ 渲染进程（沙箱）────────
 - `hostlane daemon install` 把守护进程注册为用户级服务：macOS 写入 `~/Library/LaunchAgents/com.hostlane.daemon.plist` 并 `launchctl bootstrap`（`RunAtLoad`，`KeepAlive` 只在非 0 退出时重启）；Linux 写入 `~/.config/systemd/user/hostlane.service` 并 `enable` + `restart`（`Restart=on-failure`）。服务文件记录当前二进制的绝对路径和当时设置的 `HOSTLANE_SOCKET`、`HOSTLANE_DATA_DIR`、`HOSTLANE_SSH_CONFIG`、`HOSTLANE_NOTIFY`。正在运行的守护进程会先被停止，再由服务接管。`--print` 只输出服务文件。
 - 服务已安装时，`hostlane daemon start`（以及桌面端和 MCP 的自动拉起）改为让服务管理器启动（`launchctl kickstart` / `systemctl --user start`），不会在服务之外再起一个守护进程。`hostlane daemon stop` 正常退出（退出码 0），服务不会把它重新拉起。
 - `hostlane daemon uninstall` 停止服务（守护进程随之退出）并删除服务文件；`hostlane daemon service` 查看是否安装以及服务运行的二进制。
-- 打包后的桌面端把 release 版 `hostlane` 放在 `Resources/bin/`（electron-builder 的 `extraResources`，`npm run build:cli` 构建）；`main/daemon.ts` 在打包时使用它，开发时使用 `target/debug/hostlane`，也可以用 `HOSTLANE_BIN` 指定。Windows 版暂不内置（守护进程需要 Unix socket）。
+- 桌面端在应用资源目录的 `bin/` 内置 CLI（Windows 为 `hostlane.exe`）。`main/daemon.ts` 在开发时使用 `target/debug` 下的程序，也可以用 `HOSTLANE_BIN` 指定。
 
 ## 路径
 
@@ -88,18 +88,18 @@ Electron 主进程 ◄─IPC─ 渲染进程（沙箱）────────
 | ------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------- |
 | macOS   | `~/Library/Application Support/Hostlane`                     | `<数据目录>/hostlane.sock`                                                       |
 | Linux   | `$XDG_STATE_HOME/hostlane`，默认为 `~/.local/state/hostlane` | `$XDG_RUNTIME_DIR/hostlane/hostlane.sock`，没有时使用 `<数据目录>/hostlane.sock` |
-| Windows | `%APPDATA%\Hostlane`                                         | 命名管道（V1）                                                                   |
+| Windows | `%APPDATA%\Hostlane`                                         | `\\.\pipe\hostlane-<数据目录散列前 24 位>`                                       |
 
 数据目录中的文件：
 
-| 文件                                         | 内容                                                                                                                                                                                                                                                                                                                                                                                                          |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hostlane.db`                                | SQLite（WAL）：`calls` 表是审计日志，由触发器禁止 UPDATE 和 DELETE；`execs` 表是会话监视器使用的命令记录；`file_changes` 表记录每次文件修改及其 diff；`port_notes` 表保存端口备注；`tunnels` 表保存隧道配置；`manual_hosts` 表保存手动添加的主机；`secrets` 表是已保存凭据的清单（不含凭据本身）；`jobs` 表记录后台任务最近一次读到的状态；`clients` 表保存登记的客户端和令牌的 SHA-256。当前 schema 版本为 7 |
-| `backups/<change_id>`                        | 文件被修改、上传覆盖或删除前的内容，权限 0600，保留 30 天，供 `files.revert` 使用                                                                                                                                                                                                                                                                                                                             |
-| `outputs/<id>.stdout`、`outputs/<id>.stderr` | 命令的完整输出，权限 0600；每个流最多保存 64 MiB，保留 30 天                                                                                                                                                                                                                                                                                                                                                  |
-| `known_hosts`                                | Hostlane 信任的主机密钥。Hostlane 也会读取 ssh_config 同目录下的 `known_hosts`（或 `UserKnownHostsFile`），但只写这个文件                                                                                                                                                                                                                                                                                     |
-| `daemon.log`                                 | `hostlane daemon start` 启动时的日志                                                                                                                                                                                                                                                                                                                                                                          |
-| `secrets.json`                               | 只在 `HOSTLANE_SECRET_STORE=file` 时使用（测试），权限 0600                                                                                                                                                                                                                                                                                                                                                   |
+| 文件                                         | 内容                                                                                                                                                                                                                                                  |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hostlane.db`                                | SQLite（WAL），schema v8。`calls` 是只追加的审计日志；`execs` 保存命令记录；`file_changes` 保存文件修改和 diff；`port_notes`、`tunnels`、`manual_hosts` 保存配置；`secrets` 只保存凭据清单；`jobs` 保存任务状态；`clients` 保存客户端信息和令牌散列。 |
+| `backups/<change_id>`                        | 文件被修改、上传覆盖或删除前的内容，权限 0600，保留 30 天，供 `files.revert` 使用                                                                                                                                                                     |
+| `outputs/<id>.stdout`、`outputs/<id>.stderr` | 命令的完整输出，权限 0600；每个流最多保存 64 MiB，保留 30 天                                                                                                                                                                                          |
+| `known_hosts`                                | Hostlane 信任的主机密钥。Hostlane 也会读取 ssh_config 同目录下的 `known_hosts`（或 `UserKnownHostsFile`），但只写这个文件                                                                                                                             |
+| `daemon.log`                                 | `hostlane daemon start` 启动时的日志                                                                                                                                                                                                                  |
+| `secrets.json`                               | 只在 `HOSTLANE_SECRET_STORE=file` 时使用（测试），权限 0600                                                                                                                                                                                           |
 
 socket 文件权限为 0600，所在目录权限为 0700。启动时如果发现残留的 socket 文件，会先尝试连接：能连上说明已有守护进程在运行，此时拒绝启动；连不上则删除残留文件。
 
@@ -299,9 +299,11 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）、`HOSTLANE_SESSION` 和
 - `jobs.cancel` 先向进程组发 TERM，5 秒后仍在运行则发 KILL，再关闭 tmux 会话。`policy.stop` 会取消 agent 启动的全部运行中任务（`PolicyStopped.cancelled_jobs`）。
 - 策略：`jobs.start` 按命令分级（与 `exec.run` 相同）；`jobs.logs` 为 L0，`jobs.cancel` 为 L1，二者都按任务所在的主机匹配规则。审计日志记录命令，不记录日志内容。
 
-### Web 运维
+### 审计与回滚
 
-审计与回滚（M11）：可选的 `client.task` 来自 CLI/MCP 的 `HOSTLANE_TASK`，不替代会话 ID。schema v8 为调用、命令、文件修改保存任务标识；旧数据无需回填。`audit.list` 支持组合 `task`、`session`、`client`、`host`，CLI 分页导出或按开始时间排序。`files.rollback_plan` 返回指定任务尚未撤销的修改（最新在先），`rollback --apply` 逐条调用原有的 `files.revert`，不绕过审批、哈希校验或备份保留期。整个批次不是跨主机事务，失败后可以重新预览。回放只读取本地保留的输出，不在远端重新执行。
+可选的 `client.task` 来自 CLI/MCP 的 `HOSTLANE_TASK`，不替代会话 ID。schema v8 为调用、命令、文件修改保存任务标识；旧数据无需回填。`audit.list` 支持组合 `task`、`session`、`client`、`host`，CLI 分页导出或按开始时间排序。`files.rollback_plan` 返回指定任务尚未撤销的修改（最新在先），`rollback --apply` 逐条调用原有的 `files.revert`，不绕过审批、哈希校验或备份保留期。整个批次不是跨主机事务，失败后可以重新预览。回放只读取本地保留的输出，不在远端重新执行。
+
+### Web 运维
 
 - `hosts.profile`、`web.report` 只对已配置主机运行固定的只读命令，沿用 SSH 指纹校验、策略和审计。报告不主动从公网扫描，不申请 sudo，不返回代理配置原文。不可判断的防火墙状态显示为未知。解析范围为 `/etc/nginx/nginx.conf`、`conf.d/*.conf`、`sites-enabled/*` 和 `/etc/caddy/Caddyfile` 中的静态站点及上游。
 - `hosts.note {host, content}` 只允许用户保存备注（最多 16 KiB）；`hosts.export {host}` 返回 `content` 和 `markdown`。备注、健康检查配置复用 SQLite 的 `settings`，不改变数据库版本。
@@ -405,7 +407,7 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）、`HOSTLANE_SESSION` 和
   - Linux 和 macOS：`cargo fmt --check`、`cargo clippy -D warnings`、`cargo test`、检查生成的 TS 类型已提交、`e2e.py`；Linux 上再跑 `bench.py`，结果写到 job summary。
   - 桌面端：`npm ci`、`typecheck`、`prettier --check`、`electron-vite build`。
   - Windows：在原生 runner 检查所有 Rust 目标，验证后台启动、管道请求、桌面传输、登录任务注册和注销、打包后读取测试主机。测试使用临时数据目录。
-- `.github/workflows/release.yml`（推送 `v*` tag）：在 macOS（arm64）和 Linux（x64）上打安装包（dmg、zip、AppImage）并跑冒烟测试，另外打包 CLI（`hostlane-<版本>-<target>.tar.gz` 和 `.sha256`），发布到 GitHub Release；tag 带 `-` 时标为预发布。安装包没有签名，macOS 上需要 `xattr -cr Hostlane.app`。
+- `.github/workflows/release.yml`（推送 `v*` tag）：打包 macOS arm64（dmg、zip）、Linux x64（AppImage）和 Windows x64（NSIS），运行桌面冒烟测试，并发布各平台 CLI 压缩包和 SHA-256。安装包未签名；tag 带 `-` 时标为预发布。
 
 Windows 传输：默认名称为 `\\.\pipe\hostlane-<数据目录 SHA-256 的前 24 位>`。服务端设置当前用户 SID 为所有者，使用仅对该 SID 放行的受保护 DACL，拒绝网络客户端；首实例要求名称未被占用。Rust 客户端在发送任何请求前验证已打开句柄的所有者；Electron 通过内置 CLI 的 stdio 桥使用相同检查，不将凭据放在命令行参数中。Windows 使用当前用户的交互式登录任务，不保存密码、不要求提升权限。
 

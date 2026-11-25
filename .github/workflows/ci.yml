@@ -106,6 +106,30 @@ jobs:
       - name: Check
         run: cargo check --workspace --all-targets
 
+      - name: Verify live pipe ownership and access rules
+        run: cargo test -p hostlane-core windows_pipe::tests
+
+      - name: Sign with a disposable Windows OpenSSH agent key
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $PSNativeCommandArgumentPassing = 'Standard'
+          $ssh = Join-Path $env:SystemRoot 'System32/OpenSSH'
+          $key = Join-Path $env:RUNNER_TEMP ('hl-agent-' + [guid]::NewGuid())
+          Set-Service ssh-agent -StartupType Manual
+          Start-Service ssh-agent
+          & "$ssh/ssh-keygen.exe" -q -t ed25519 -N '' -f $key
+          try {
+            & "$ssh/ssh-add.exe" $key
+            $env:HOSTLANE_TEST_PUBLIC_KEY = "$key.pub"
+            $env:SSH_AUTH_SOCK = $null
+            cargo test -p hostlane-core windows_openssh_agent_signs_with_fixture_key -- --ignored
+          } finally {
+            & "$ssh/ssh-add.exe" -d "$key.pub"
+            Remove-Item $key,"$key.pub" -Force
+          }
+
       - name: Build CLI and test the per-user runtime
         shell: pwsh
         run: |
