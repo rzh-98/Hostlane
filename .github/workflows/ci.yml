@@ -51,7 +51,7 @@ jobs:
 
       - name: Install sshd
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends openssh-server
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends openssh-server tmux
 
       - name: End-to-end test against a local sshd
         run: |

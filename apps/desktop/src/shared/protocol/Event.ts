@@ -4,6 +4,7 @@ import type { AuditEntry } from "./AuditEntry";
 import type { Connection } from "./Connection";
 import type { ExecRecord } from "./ExecRecord";
 import type { FileChange } from "./FileChange";
+import type { Job } from "./Job";
 import type { OutputStream } from "./OutputStream";
 import type { PolicyStatus } from "./PolicyStatus";
 import type { Tunnel } from "./Tunnel";
@@ -11,4 +12,4 @@ import type { Tunnel } from "./Tunnel";
 /**
  * Pushed to `events.subscribe` connections as `{"method":"event","params":<Event>}`.
  */
-export type Event = { "type": "exec_started", exec: ExecRecord, } | { "type": "exec_output", id: string, stream: OutputStream, data: string, } | { "type": "exec_finished", exec: ExecRecord, } | { "type": "connection", connection: Connection, } | { "type": "file_changed", change: FileChange, } | { "type": "audit_appended", entry: AuditEntry, } | { "type": "tunnel", tunnel: Tunnel, } | { "type": "tunnel_removed", id: string, } | { "type": "approval_requested", approval: Approval, } | { "type": "approval_updated", approval: Approval, } | { "type": "policy", status: PolicyStatus, } | { "type": "lagged", skipped: number, };
+export type Event = { "type": "exec_started", exec: ExecRecord, } | { "type": "exec_output", id: string, stream: OutputStream, data: string, } | { "type": "exec_finished", exec: ExecRecord, } | { "type": "connection", connection: Connection, } | { "type": "file_changed", change: FileChange, } | { "type": "audit_appended", entry: AuditEntry, } | { "type": "tunnel", tunnel: Tunnel, } | { "type": "tunnel_removed", id: string, } | { "type": "approval_requested", approval: Approval, } | { "type": "approval_updated", approval: Approval, } | { "type": "policy", status: PolicyStatus, } | { "type": "job", job: Job, } | { "type": "lagged", skipped: number, };

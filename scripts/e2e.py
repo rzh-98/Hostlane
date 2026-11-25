@@ -9,6 +9,7 @@ keep the temporary directory.
 
 import http.server
 import json
+import shutil
 import socket
 import subprocess
 import sys
@@ -34,15 +35,15 @@ def fail(message):
     raise SystemExit(1)
 
 
-def hl(*args, stdin=None, check=True):
+def hl(*args, stdin=None, check=True, env=None):
     """Runs `hostlane --json ARGS`; returns the parsed result, or the error object."""
     proc = subprocess.run(
         [HL, "--json", *args],
         input=stdin if stdin is not None else "",
         capture_output=True,
         text=True,
-        env=ENV,
-        timeout=120,
+        env={**ENV, **(env or {})},
+        timeout=180,
     )
     try:
         out = json.loads(proc.stdout) if proc.stdout.strip() else None
@@ -308,6 +309,67 @@ def main():
     expect(error["kind"] == "INVALID_PARAMS", f"bad unit name: {error}")
     step("processes.kill and services.logs build and run checked commands")
 
+    script = "for i in 1 2 3; do echo line$i; sleep 1; done; echo done >&2; exit 4"
+    job = maybe_approved("job", "start", "test", "--name", "count", "--", script)
+    expect(job["state"] == "running" and job["backend"] in ("tmux", "nohup"), f"job: {job}")
+    hl("disconnect", "test")
+    status = hl("job", "status", job["id"], "--wait", "30")
+    expect(status["state"] == "exited" and status["exit_code"] == 4, f"job status: {status}")
+    logs = maybe_approved("job", "logs", job["id"])
+    expect(logs["data"] == "line1\nline2\nline3\ndone\n", f"job logs: {logs}")
+    expect(logs["complete"] and logs["untrusted"] == ["data"], f"job logs flags: {logs}")
+    part = maybe_approved("job", "logs", job["id"], "--offset", "6")
+    expect(part["data"] == "line2\nline3\ndone\n" and part["offset"] == 6, f"offset: {part}")
+    follow = subprocess.run(
+        [HL, "job", "logs", job["id"], "--follow"], env=ENV, capture_output=True, text=True,
+        stdin=subprocess.DEVNULL, timeout=60,
+    )
+    expect(follow.returncode == 4 and "line3" in follow.stdout, f"follow: {follow}")
+    long = maybe_approved("job", "start", "test", "--nohup", "--", "sleep 301 & sleep 301")
+    expect(long["backend"] == "nohup" and long.get("pid"), f"nohup job: {long}")
+    cancelled = maybe_approved("job", "cancel", long["id"])
+    expect(cancelled["state"] == "cancelled", f"cancel: {cancelled}")
+    left = hl("exec", "test", "--", "ps -eo args= | grep -c '^sleep 30[1]$' || true")
+    expect(left["stdout"].strip() == "0", f"job processes left: {left}")
+    if shutil.which("tmux"):
+        in_tmux = maybe_approved("job", "start", "test", "--tmux", "--", "echo in-tmux; exit 2")
+        expect(in_tmux["backend"] == "tmux", f"tmux job: {in_tmux}")
+        status = hl("job", "status", in_tmux["id"], "--wait", "30")
+        expect(status["state"] == "exited" and status["exit_code"] == 2, f"tmux status: {status}")
+        logs = maybe_approved("job", "logs", in_tmux["id"])
+        expect(logs["data"] == "in-tmux\n", f"tmux logs: {logs}")
+        held = maybe_approved("job", "start", "test", "--tmux", "--", "sleep 303 & sleep 303")
+        cancelled = maybe_approved("job", "cancel", held["id"])
+        expect(cancelled["state"] == "cancelled", f"tmux cancel: {cancelled}")
+        left = hl("exec", "test", "--", "ps -eo args= | grep -c '^sleep 30[3]$' || true")
+        expect(left["stdout"].strip() == "0", f"tmux job processes left: {left}")
+        print("# tmux backend tested", flush=True)
+    third = maybe_approved("job", "start", "test", "--", "sleep 302")
+    stopped = hl("stop", "--reason", "e2e jobs")
+    expect(third["id"] in stopped["cancelled_jobs"], f"stop did not cancel the job: {stopped}")
+    hl("resume")
+    jobs = hl("jobs")["jobs"]
+    expect({job["id"], long["id"], third["id"]} <= {j["id"] for j in jobs}, f"jobs: {jobs}")
+    expect(all(j["state"] != "running" for j in jobs), f"running jobs left: {jobs}")
+    step("background jobs survive disconnects, stream logs and cancel")
+
+    token = hl("client", "add", "e2e-agent")["token"]
+    agent = {"HOSTLANE_TOKEN": token, "HOSTLANE_CLIENT": "pretender"}
+    hl("exec", "test", "--", "echo as-agent", env=agent)
+    latest = hl("audit", "--limit", "1")["entries"][0]
+    expect(latest["client"]["name"] == "e2e-agent", f"token client: {latest}")
+    expect(latest["client"].get("verified") is True, f"not verified: {latest}")
+    hl("client", "require-token", "on")
+    error = hl_error("exec", "test", "--", "true", env={"HOSTLANE_CLIENT": "anon"})
+    expect(error["kind"] == "UNAUTHORIZED", f"anonymous agent: {error}")
+    hl("exec", "test", "--", "true")
+    hl("client", "revoke", "e2e-agent")
+    error = hl_error("exec", "test", "--", "true", env=agent)
+    expect(error["kind"] == "UNAUTHORIZED", f"revoked token: {error}")
+    hl("client", "require-token", "off")
+    expect(token not in json.dumps(hl("audit", "--limit", "500")), "token leaked into the audit log")
+    step("client tokens identify agents; revoked or missing tokens are refused")
+
     init, tools, results = mcp_session(
         [
             ("exec", {"host": "test", "command": "echo from-mcp"}),
@@ -316,9 +378,12 @@ def main():
         ]
     )
     expect(init["serverInfo"]["name"] == "hostlane", f"mcp init: {init}")
-    expect({"exec", "read_file", "open_tunnel", "service_logs"} <= set(tools), f"tools: {tools}")
+    expected_tools = {"exec", "read_file", "open_tunnel", "service_logs", "job_start", "job_logs"}
+    expect(expected_tools <= set(tools), f"tools: {tools}")
     expect(not {"add_host", "set_secret"} & set(tools), f"person-only tools: {tools}")
     expect(results[0]["structuredContent"]["stdout"] == "from-mcp\n", f"mcp exec: {results[0]}")
+    expect("Untrusted data" in results[0]["content"][0]["text"], f"mcp untrusted: {results[0]}")
+    expect("untrusted" in init["instructions"], f"mcp instructions: {init}")
     expect("port = 8000" in results[1]["structuredContent"]["content"], f"mcp read: {results[1]}")
     expect(results[2].get("isError"), f"mcp error: {results[2]}")
     expect(

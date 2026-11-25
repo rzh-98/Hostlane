@@ -4,10 +4,11 @@
 
 use hostlane_protocol::{
     ApprovalsList, ApprovalsListParams, AuditEntry, AuditListParams, AuditOutcome, ClientInfo,
-    ConnectionsList, Decision, ErrorKind, Event, ExecList, ExecListParams, ExecParams,
-    FileChangeParams, HostLabelParams, HostParams, HostsList, IdParams, PolicyCheck,
-    PolicyCheckParams, PolicyRules, PolicyStopParams, PolicyStopped, Risk, RpcError, TrustParams,
-    TrustResult, TunnelParams, method,
+    ClientNameParams, ClientsConfigureParams, ConnectionsList, Decision, ErrorKind, Event,
+    ExecList, ExecListParams, ExecParams, FileChangeParams, HostLabelParams, HostParams, HostsList,
+    IdParams, JobParams, PolicyCheck, PolicyCheckParams, PolicyRules, PolicyStopParams,
+    PolicyStopped, Risk, RpcError, TrustParams, TrustResult, TunnelParams, UNTRUSTED_MEMBER,
+    method, untrusted_fields,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -33,6 +34,9 @@ const POLICY_CHANGES: &[&str] = &[
     method::HOSTS_REMOVE,
     method::SECRETS_SET,
     method::SECRETS_DELETE,
+    method::CLIENTS_CREATE,
+    method::CLIENTS_REVOKE,
+    method::CLIENTS_CONFIGURE,
     method::APPROVALS_RESOLVE,
     method::POLICY_STOP,
     method::POLICY_RESUME,
@@ -40,7 +44,24 @@ const POLICY_CHANGES: &[&str] = &[
     method::POLICY_RULES_DELETE,
 ];
 
+/// Runs a call and lists the result fields that hold text from the server (S6).
 pub(crate) async fn dispatch(
+    daemon: &Daemon,
+    client: &ClientInfo,
+    name: &str,
+    params: Value,
+) -> Result<Value, RpcError> {
+    let mut result = audited(daemon, client, name, params).await;
+    let fields = untrusted_fields(name);
+    if !fields.is_empty()
+        && let Ok(Value::Object(object)) = &mut result
+    {
+        object.insert(UNTRUSTED_MEMBER.into(), json!(fields));
+    }
+    result
+}
+
+async fn audited(
     daemon: &Daemon,
     client: &ClientInfo,
     name: &str,
@@ -79,7 +100,8 @@ pub(crate) async fn dispatch(
         let value = result.as_ref().ok()?;
         let host = value
             .get("host")
-            .or_else(|| value.pointer("/tunnel/host"))?;
+            .or_else(|| value.pointer("/tunnel/host"))
+            .or_else(|| value.pointer("/job/host"))?;
         host.as_str().map(str::to_owned)
     });
     let (outcome, error, summary) = match &result {
@@ -138,14 +160,15 @@ pub(crate) fn redact_params(params: &Value) -> Value {
     params
 }
 
-/// The audited result without bulky output: command output and file content are
-/// dropped, listings, search results and port tables are replaced by their counts.
+/// The audited result without bulky output or tokens: command output, file content
+/// and new client tokens are dropped, listings, search results and port tables are
+/// replaced by their counts.
 fn summarize(value: &Value) -> Value {
     let mut value = value.clone();
     if let Some(object) = value.as_object_mut() {
-        object.remove("stdout");
-        object.remove("stderr");
-        object.remove("content");
+        for key in ["stdout", "stderr", "content", "data", "token"] {
+            object.remove(key);
+        }
         for (key, count) in [
             ("entries", "entry_count"),
             ("matches", "match_count"),
@@ -343,6 +366,31 @@ async fn run(
         | method::PROCESSES_KILL => {
             to_value(services::run(daemon, client, name, params, approver).await?)
         }
+        method::JOBS_START => to_value(daemon.jobs.start(client, parse(params)?, approver).await?),
+        method::JOBS_LIST => to_value(daemon.jobs.list(parse_or_default(params)?).await?),
+        method::JOBS_STATUS => to_value(daemon.jobs.status(parse(params)?).await?),
+        method::JOBS_LOGS => to_value(daemon.jobs.logs(parse(params)?).await?),
+        method::JOBS_CANCEL => {
+            let params: JobParams = parse(params)?;
+            to_value(daemon.jobs.cancel(&params.id).await?)
+        }
+        method::CLIENTS_LIST => to_value(daemon.clients.list().await?),
+        method::CLIENTS_CREATE => {
+            require_person(client, "register clients")?;
+            let params: ClientNameParams = parse(params)?;
+            to_value(daemon.clients.create(&params.name).await?)
+        }
+        method::CLIENTS_REVOKE => {
+            require_person(client, "revoke client tokens")?;
+            let params: ClientNameParams = parse(params)?;
+            daemon.clients.revoke(&params.name).await?;
+            Ok(json!({ "revoked": params.name }))
+        }
+        method::CLIENTS_CONFIGURE => {
+            require_person(client, "change client token settings")?;
+            let params: ClientsConfigureParams = parse(params)?;
+            to_value(daemon.clients.configure(params.require_token).await?)
+        }
         method::APPROVALS_LIST => {
             let params: ApprovalsListParams = parse_or_default(params)?;
             to_value(ApprovalsList {
@@ -367,11 +415,15 @@ async fn run(
         method::POLICY_STOP => {
             let params: PolicyStopParams = parse_or_default(params)?;
             let denied_approvals = daemon.policy.stop(client, params.reason).await?;
-            let closed_tunnels = daemon.tunnels.close_agent_tunnels().await;
+            let (closed_tunnels, cancelled_jobs) = tokio::join!(
+                daemon.tunnels.close_agent_tunnels(),
+                daemon.jobs.cancel_agent_jobs()
+            );
             to_value(PolicyStopped {
                 status: daemon.policy.status(),
                 closed_tunnels,
                 denied_approvals,
+                cancelled_jobs,
             })
         }
         method::POLICY_RESUME => {
@@ -480,5 +532,10 @@ mod tests {
         assert_eq!(ports["port_count"], 1);
         let free = summarize(&json!({ "ports": [8000, 8001] }));
         assert_eq!(free["ports"], json!([8000, 8001]));
+
+        let created = summarize(&json!({ "client": { "name": "a" }, "token": "hlt_x" }));
+        assert!(created.get("token").is_none());
+        let logs = summarize(&json!({ "job": { "host": "h" }, "data": "out" }));
+        assert!(logs.get("data").is_none());
     }
 }

@@ -43,6 +43,14 @@ fn parse_request(line: &str) -> Result<Request, Box<Response>> {
 
 async fn handle_request(daemon: &Daemon, request: Request) -> Response {
     let client = request.client.unwrap_or_default();
+    let client = match daemon
+        .clients
+        .authenticate(client, request.token.as_deref(), &request.method)
+        .await
+    {
+        Ok(client) => client,
+        Err(error) => return Response::err(request.id, error),
+    };
     match handlers::dispatch(daemon, &client, &request.method, request.params).await {
         Ok(result) => Response::ok(request.id, result),
         Err(error) => Response::err(request.id, error),
@@ -131,14 +139,24 @@ where
         }
         let response = match parse_request(trimmed) {
             Ok(request) if request.method == method::EVENTS_SUBSCRIBE => {
-                return subscribe(
-                    &daemon,
-                    request.client,
-                    request.id,
-                    &mut reader,
-                    &mut writer,
-                )
-                .await;
+                let client = request.client.unwrap_or_default();
+                match daemon
+                    .clients
+                    .authenticate(client, request.token.as_deref(), &request.method)
+                    .await
+                {
+                    Ok(client) => {
+                        return subscribe(
+                            &daemon,
+                            Some(client),
+                            request.id,
+                            &mut reader,
+                            &mut writer,
+                        )
+                        .await;
+                    }
+                    Err(error) => Response::err(request.id, error),
+                }
             }
             Ok(request) => handle_request(&daemon, request).await,
             Err(response) => *response,

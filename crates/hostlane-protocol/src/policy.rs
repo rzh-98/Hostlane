@@ -167,6 +167,9 @@ pub struct PolicyStopped {
     pub closed_tunnels: Vec<String>,
     /// Pending approvals that were denied.
     pub denied_approvals: Vec<String>,
+    /// Running agent jobs that were cancelled.
+    #[serde(default)]
+    pub cancelled_jobs: Vec<String>,
 }
 
 /// Params of `policy.check`: what the policy would do with a call, without running it.

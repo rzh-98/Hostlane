@@ -17,6 +17,11 @@ pub struct ClientInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub session: Option<String>,
+    /// Set by the daemon when the call carried the token of a client registered with
+    /// `clients.create`; `name` is then the registered name. Never trusted from callers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub verified: bool,
 }
 
 impl ClientInfo {
@@ -24,6 +29,7 @@ impl ClientInfo {
         Self {
             name: name.into(),
             session: None,
+            verified: false,
         }
     }
 }
@@ -43,6 +49,10 @@ pub struct Request {
     pub params: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client: Option<ClientInfo>,
+    /// Client token from `clients.create` (`HOSTLANE_TOKEN`). Kept out of `client` so it
+    /// is never recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
 }
 
 impl Request {
@@ -53,6 +63,7 @@ impl Request {
             method: method.into(),
             params,
             client: None,
+            token: None,
         }
     }
 

@@ -12,4 +12,8 @@ closed_tunnels: Array<string>,
 /**
  * Pending approvals that were denied.
  */
-denied_approvals: Array<string>, };
+denied_approvals: Array<string>, 
+/**
+ * Running agent jobs that were cancelled.
+ */
+cancelled_jobs: Array<string>, };

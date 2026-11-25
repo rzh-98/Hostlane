@@ -3,7 +3,8 @@
 //! user's notes on ports (`port_notes`), saved tunnels (`tunnels`), policy rules
 //! (`policy_rules`), host labels (`host_labels`), hosts added in Hostlane
 //! (`manual_hosts`), which secrets are in the keychain (`secrets`, never the secrets
-//! themselves) and small settings (`settings`).
+//! themselves), background jobs (`jobs`), registered agents with the hash of their
+//! token (`clients`) and small settings (`settings`).
 //! The database lives at `<data dir>/hostlane.db`.
 
 use std::collections::{BTreeMap, HashMap};
@@ -12,15 +13,16 @@ use std::sync::{Arc, Mutex};
 
 use hostlane_protocol::{
     AuditEntry, AuditList, AuditListParams, AuditOutcome, ClientInfo, ErrorKind, ExecListParams,
-    ExecRecord, ExecStatus, FileChange, FileOperation, HostAddParams, HostEnv, PolicyRule,
-    PortNote, Risk, RpcError, SavedSecret, SecretKind,
+    ExecRecord, ExecStatus, FileChange, FileOperation, HostAddParams, HostEnv, Job, JobBackend,
+    JobState, JobsListParams, PolicyRule, PortNote, RegisteredClient, Risk, RpcError, SavedSecret,
+    SecretKind,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value as Sql};
 use serde_json::{Value, json};
 
 use crate::tunnels::TunnelConfig;
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS calls (
@@ -144,6 +146,35 @@ CREATE TABLE IF NOT EXISTS secrets (
     saved_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS jobs (
+    id TEXT PRIMARY KEY,
+    host TEXT NOT NULL,
+    name TEXT,
+    command TEXT NOT NULL,
+    cwd TEXT,
+    client TEXT NOT NULL,
+    session TEXT,
+    verified INTEGER NOT NULL DEFAULT 0,
+    backend TEXT NOT NULL,
+    state TEXT NOT NULL,
+    started_at INTEGER NOT NULL,
+    finished_at INTEGER,
+    exit_code INTEGER,
+    pid INTEGER,
+    output_bytes INTEGER NOT NULL DEFAULT 0,
+    checked_at INTEGER NOT NULL,
+    approver TEXT,
+    params TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS jobs_started ON jobs (started_at);
+
+CREATE TABLE IF NOT EXISTS clients (
+    name TEXT PRIMARY KEY,
+    token_sha256 TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -151,8 +182,12 @@ CREATE TABLE IF NOT EXISTS settings (
 ";
 
 /// Columns added after a table was first created: (table, column, definition).
-const ADDED_COLUMNS: &[(&str, &str, &str)] =
-    &[("calls", "risk", "INTEGER"), ("execs", "approver", "TEXT")];
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("calls", "risk", "INTEGER"),
+    ("execs", "approver", "TEXT"),
+    ("calls", "verified", "INTEGER NOT NULL DEFAULT 0"),
+    ("execs", "verified", "INTEGER NOT NULL DEFAULT 0"),
+];
 
 /// Host labels set in Hostlane: environment and tags.
 pub type HostLabels = HashMap<String, (Option<HostEnv>, Vec<String>)>;
@@ -318,8 +353,8 @@ impl Store {
         self.with(move |conn| {
             conn.execute(
                 "INSERT INTO execs (id, host, command, cwd, client, session, status, started_at, params,
-                 approver)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                 approver, verified)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     record.id,
                     record.host,
@@ -331,6 +366,7 @@ impl Store {
                     record.started_at as i64,
                     params.to_string(),
                     record.approver,
+                    record.client.verified,
                 ],
             )?;
             Ok(())
@@ -500,10 +536,7 @@ impl Store {
                     remote_host: row.get("remote_host")?,
                     remote_port: row.get("remote_port")?,
                     auto_start: row.get("auto_start")?,
-                    created_by: ClientInfo {
-                        name: row.get("client")?,
-                        session: row.get("session")?,
-                    },
+                    created_by: client_from_row(row, false)?,
                     created_at: row.get::<_, i64>("created_at")? as u64,
                 })
             })?
@@ -768,6 +801,138 @@ impl Store {
         .await
     }
 
+    pub async fn insert_job(&self, job: Job, params: Value) -> Result<(), RpcError> {
+        self.with(move |conn| {
+            conn.execute(
+                "INSERT INTO jobs (id, host, name, command, cwd, client, session, verified, backend,
+                 state, started_at, checked_at, approver, params)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                params![
+                    job.id,
+                    job.host,
+                    job.name,
+                    job.command,
+                    job.cwd,
+                    job.client.name,
+                    job.client.session,
+                    job.client.verified,
+                    enum_text(job.backend),
+                    enum_text(job.state),
+                    job.started_at as i64,
+                    job.checked_at as i64,
+                    job.approver,
+                    params.to_string(),
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Stores the state last read from the server.
+    pub async fn update_job(&self, job: Job) -> Result<(), RpcError> {
+        self.with(move |conn| {
+            conn.execute(
+                "UPDATE jobs SET state = ?2, finished_at = ?3, exit_code = ?4, pid = ?5,
+                 output_bytes = ?6, checked_at = ?7 WHERE id = ?1",
+                params![
+                    job.id,
+                    enum_text(job.state),
+                    job.finished_at.map(|t| t as i64),
+                    job.exit_code,
+                    job.pid,
+                    job.output_bytes as i64,
+                    job.checked_at as i64,
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn get_job(&self, id: String) -> Result<Option<Job>, RpcError> {
+        self.with(move |conn| {
+            conn.query_row("SELECT * FROM jobs WHERE id = ?1", [id], job_from_row)
+                .optional()
+        })
+        .await
+    }
+
+    pub async fn list_jobs(&self, params: JobsListParams) -> Result<Vec<Job>, RpcError> {
+        self.with(move |conn| {
+            let mut sql = String::from("SELECT * FROM jobs WHERE 1=1");
+            let mut args: Vec<Sql> = Vec::new();
+            if let Some(host) = params.host {
+                sql.push_str(" AND host = ?");
+                args.push(Sql::Text(host));
+            }
+            if params.running {
+                sql.push_str(" AND state = 'running'");
+            }
+            let limit = params.limit.unwrap_or(50).clamp(1, 500);
+            sql.push_str(&format!(" ORDER BY started_at DESC, id DESC LIMIT {limit}"));
+            let mut stmt = conn.prepare(&sql)?;
+            stmt.query_map(params_from_iter(args), job_from_row)?
+                .collect()
+        })
+        .await
+    }
+
+    pub async fn clients(&self) -> Result<Vec<RegisteredClient>, RpcError> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare("SELECT * FROM clients ORDER BY name")?;
+            stmt.query_map([], registered_client_from_row)?.collect()
+        })
+        .await
+    }
+
+    /// Registers a client; returns false if the name is taken.
+    pub async fn insert_client(
+        &self,
+        client: RegisteredClient,
+        token_sha256: String,
+    ) -> Result<bool, RpcError> {
+        self.with(move |conn| {
+            let added = conn.execute(
+                "INSERT OR IGNORE INTO clients (name, token_sha256, created_at) VALUES (?1, ?2, ?3)",
+                params![client.name, token_sha256, client.created_at as i64],
+            )?;
+            Ok(added > 0)
+        })
+        .await
+    }
+
+    pub async fn delete_client(&self, name: String) -> Result<bool, RpcError> {
+        self.with(move |conn| Ok(conn.execute("DELETE FROM clients WHERE name = ?1", [name])? > 0))
+            .await
+    }
+
+    /// The registered name for a token hash, marking it used at `now`.
+    pub async fn use_client_token(
+        &self,
+        token_sha256: String,
+        now: u64,
+    ) -> Result<Option<String>, RpcError> {
+        self.with(move |conn| {
+            let name: Option<String> = conn
+                .query_row(
+                    "SELECT name FROM clients WHERE token_sha256 = ?1",
+                    [&token_sha256],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if name.is_some() {
+                conn.execute(
+                    "UPDATE clients SET last_used_at = ?2 WHERE token_sha256 = ?1
+                     AND (last_used_at IS NULL OR last_used_at < ?2 - 60000)",
+                    params![token_sha256, now as i64],
+                )?;
+            }
+            Ok(name)
+        })
+        .await
+    }
+
     /// Marks commands left running by a previous daemon as interrupted and audits them.
     pub async fn recover_interrupted(&self, now: u64) -> Result<usize, RpcError> {
         self.with(move |conn| {
@@ -808,8 +973,8 @@ impl Store {
 fn insert_call(conn: &Connection, call: &NewCall) -> Result<i64, rusqlite::Error> {
     conn.execute(
         "INSERT INTO calls (started_at, finished_at, client, session, host, method, params,
-         outcome, error_kind, error_message, result, approver, risk)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+         outcome, error_kind, error_message, result, approver, risk, verified)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             call.started_at as i64,
             call.finished_at as i64,
@@ -824,6 +989,7 @@ fn insert_call(conn: &Connection, call: &NewCall) -> Result<i64, rusqlite::Error
             call.result.to_string(),
             call.approver,
             call.risk.map(|r| r.level() as i64),
+            call.client.verified,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -841,10 +1007,7 @@ fn call_from_row(row: &Row) -> rusqlite::Result<AuditEntry> {
         id: row.get("id")?,
         started_at: row.get::<_, i64>("started_at")? as u64,
         finished_at: row.get::<_, i64>("finished_at")? as u64,
-        client: ClientInfo {
-            name: row.get("client")?,
-            session: row.get("session")?,
-        },
+        client: client_from_row(row, true)?,
         host: row.get("host")?,
         method: row.get("method")?,
         params: json_column(row, "params")?,
@@ -859,6 +1022,44 @@ fn call_from_row(row: &Row) -> rusqlite::Result<AuditEntry> {
     })
 }
 
+fn client_from_row(row: &Row, with_verified: bool) -> rusqlite::Result<ClientInfo> {
+    Ok(ClientInfo {
+        name: row.get("client")?,
+        session: row.get("session")?,
+        verified: with_verified && row.get::<_, Option<bool>>("verified")?.unwrap_or(false),
+    })
+}
+
+fn job_from_row(row: &Row) -> rusqlite::Result<Job> {
+    let backend: String = row.get("backend")?;
+    let state: String = row.get("state")?;
+    Ok(Job {
+        id: row.get("id")?,
+        host: row.get("host")?,
+        name: row.get("name")?,
+        command: row.get("command")?,
+        cwd: row.get("cwd")?,
+        client: client_from_row(row, true)?,
+        backend: enum_parse(&backend).unwrap_or(JobBackend::Nohup),
+        state: enum_parse(&state).unwrap_or(JobState::Lost),
+        started_at: row.get::<_, i64>("started_at")? as u64,
+        finished_at: row.get::<_, Option<i64>>("finished_at")?.map(|t| t as u64),
+        exit_code: row.get("exit_code")?,
+        pid: row.get("pid")?,
+        output_bytes: row.get::<_, i64>("output_bytes")? as u64,
+        checked_at: row.get::<_, i64>("checked_at")? as u64,
+        approver: row.get("approver")?,
+    })
+}
+
+fn registered_client_from_row(row: &Row) -> rusqlite::Result<RegisteredClient> {
+    Ok(RegisteredClient {
+        name: row.get("name")?,
+        created_at: row.get::<_, i64>("created_at")? as u64,
+        last_used_at: row.get::<_, Option<i64>>("last_used_at")?.map(|t| t as u64),
+    })
+}
+
 fn exec_from_row(row: &Row) -> rusqlite::Result<ExecRecord> {
     let status: String = row.get("status")?;
     Ok(ExecRecord {
@@ -866,10 +1067,7 @@ fn exec_from_row(row: &Row) -> rusqlite::Result<ExecRecord> {
         host: row.get("host")?,
         command: row.get("command")?,
         cwd: row.get("cwd")?,
-        client: ClientInfo {
-            name: row.get("client")?,
-            session: row.get("session")?,
-        },
+        client: client_from_row(row, true)?,
         status: enum_parse(&status).unwrap_or(ExecStatus::Failed),
         started_at: row.get::<_, i64>("started_at")? as u64,
         finished_at: row.get::<_, Option<i64>>("finished_at")?.map(|t| t as u64),
@@ -889,10 +1087,7 @@ fn file_change_from_row(row: &Row) -> rusqlite::Result<FileChange> {
         host: row.get("host")?,
         path: row.get("path")?,
         operation: enum_parse(&operation).unwrap_or(FileOperation::Write),
-        client: ClientInfo {
-            name: row.get("client")?,
-            session: row.get("session")?,
-        },
+        client: client_from_row(row, false)?,
         created_at: row.get::<_, i64>("created_at")? as u64,
         created: row.get("created")?,
         deleted: row.get("deleted")?,

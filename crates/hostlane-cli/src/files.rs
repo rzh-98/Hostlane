@@ -12,7 +12,7 @@ use hostlane_protocol::{
     FileReadParams, FileSearchParams, FileSearchResult, FileUploadParams, FileWriteParams, method,
 };
 
-use crate::{ago, print_json, print_table, read_stdin};
+use crate::{ago, print_json, print_table, print_untrusted, read_stdin};
 
 #[derive(Subcommand)]
 pub enum FileCommand {
@@ -146,7 +146,7 @@ pub async fn run(client: &Client, command: FileCommand, json: bool) -> Result<()
                 .call_as(method::FILES_READ, serde_json::to_value(&params)?)
                 .await?;
             if json {
-                print_json(&file);
+                print_untrusted(method::FILES_READ, &file);
                 return Ok(());
             }
             if file.binary {
@@ -224,7 +224,7 @@ pub async fn run(client: &Client, command: FileCommand, json: bool) -> Result<()
                 .call_as(method::FILES_SEARCH, serde_json::to_value(&params)?)
                 .await?;
             if json {
-                print_json(&result);
+                print_untrusted(method::FILES_SEARCH, &result);
                 return Ok(());
             }
             for found in &result.matches {

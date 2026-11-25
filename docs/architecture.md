@@ -26,15 +26,19 @@ Hostlane/
 │  │     ├─ ports/                  ports.*：端口发现（discover）、HTTP/HTTPS 探测（probe）、证书解析（cert）
 │  │     ├─ tunnels.rs              tunnels.*：本地转发、冲突检测、断线重连、临时隧道到期关闭
 │  │     ├─ services.rs             services.* / processes.kill：从参数生成 journalctl、systemctl、docker、kill 命令并执行
+│  │     ├─ jobs.rs                 jobs.*：后台任务（tmux / nohup）的启动、状态、日志、取消和后台巡检
+│  │     ├─ clients.rs              clients.* 和每个请求的令牌校验（A5）
 │  │     ├─ remote.rs               Hostlane 自己运行的辅助命令（搜索、mv 兜底、端口扫描）
 │  │     ├─ policy/                 策略：shell 词法（shell）、风险分级（classify）、规则匹配（rules）、审批队列（approvals）、急停和放行流程（mod）
-│  │     ├─ store.rs                SQLite：审计日志（只追加）、命令记录、文件修改记录、端口备注、保存的隧道、策略规则、主机标签、手动添加的主机、凭据清单和设置
+│  │     ├─ store.rs                SQLite：审计日志（只追加）、命令记录、文件修改记录、端口备注、保存的隧道、策略规则、主机标签、手动添加的主机、凭据清单、后台任务、登记的客户端和设置
 │  │     └─ events.rs               事件总线（broadcast）
 │  └─ hostlane-cli/              `hostlane` 二进制
 │     └─ src/
 │        ├─ main.rs                 CLI 和 `daemon` 子命令
 │        ├─ mcp.rs                  `hostlane mcp`：stdio MCP Server（rmcp），工具到方法的映射
 │        ├─ manage.rs               `host`、`secret(s)`、`logs`、`service`、`kill`
+│        ├─ jobs.rs                 `job start/status/logs/cancel`、`jobs`
+│        ├─ clients.rs              `client add/revoke/require-token`、`clients`
 │        └─ service.rs              `daemon install`：launchd / systemd --user 服务文件
 ├─ apps/desktop/                 Electron 桌面端（基于 Desktop-Starter）
 │  └─ src/
@@ -88,14 +92,14 @@ Electron 主进程 ◄─IPC─ 渲染进程（沙箱）────────
 
 数据目录中的文件：
 
-| 文件                                         | 内容                                                                                                                                                                                                                                                                                             |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `hostlane.db`                                | SQLite（WAL）：`calls` 表是审计日志，由触发器禁止 UPDATE 和 DELETE；`execs` 表是会话监视器使用的命令记录；`file_changes` 表记录每次文件修改及其 diff；`port_notes` 表保存端口备注；`tunnels` 表保存隧道配置；`manual_hosts` 表保存手动添加的主机；`secrets` 表是已保存凭据的清单（不含凭据本身） |
-| `backups/<change_id>`                        | 文件被修改、上传覆盖或删除前的内容，权限 0600，保留 30 天，供 `files.revert` 使用                                                                                                                                                                                                                |
-| `outputs/<id>.stdout`、`outputs/<id>.stderr` | 命令的完整输出，权限 0600；每个流最多保存 64 MiB，保留 30 天                                                                                                                                                                                                                                     |
-| `known_hosts`                                | Hostlane 信任的主机密钥。Hostlane 也会读取 ssh_config 同目录下的 `known_hosts`（或 `UserKnownHostsFile`），但只写这个文件                                                                                                                                                                        |
-| `daemon.log`                                 | `hostlane daemon start` 启动时的日志                                                                                                                                                                                                                                                             |
-| `secrets.json`                               | 只在 `HOSTLANE_SECRET_STORE=file` 时使用（测试），权限 0600                                                                                                                                                                                                                                      |
+| 文件                                         | 内容                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hostlane.db`                                | SQLite（WAL）：`calls` 表是审计日志，由触发器禁止 UPDATE 和 DELETE；`execs` 表是会话监视器使用的命令记录；`file_changes` 表记录每次文件修改及其 diff；`port_notes` 表保存端口备注；`tunnels` 表保存隧道配置；`manual_hosts` 表保存手动添加的主机；`secrets` 表是已保存凭据的清单（不含凭据本身）；`jobs` 表记录后台任务最近一次读到的状态；`clients` 表保存登记的客户端和令牌的 SHA-256。当前 schema 版本为 7 |
+| `backups/<change_id>`                        | 文件被修改、上传覆盖或删除前的内容，权限 0600，保留 30 天，供 `files.revert` 使用                                                                                                                                                                                                                                                                                                                             |
+| `outputs/<id>.stdout`、`outputs/<id>.stderr` | 命令的完整输出，权限 0600；每个流最多保存 64 MiB，保留 30 天                                                                                                                                                                                                                                                                                                                                                  |
+| `known_hosts`                                | Hostlane 信任的主机密钥。Hostlane 也会读取 ssh_config 同目录下的 `known_hosts`（或 `UserKnownHostsFile`），但只写这个文件                                                                                                                                                                                                                                                                                     |
+| `daemon.log`                                 | `hostlane daemon start` 启动时的日志                                                                                                                                                                                                                                                                                                                                                                          |
+| `secrets.json`                               | 只在 `HOSTLANE_SECRET_STORE=file` 时使用（测试），权限 0600                                                                                                                                                                                                                                                                                                                                                   |
 
 socket 文件权限为 0600，所在目录权限为 0700。启动时如果发现残留的 socket 文件，会先尝试连接：能连上说明已有守护进程在运行，此时拒绝启动；连不上则删除残留文件。
 
@@ -122,7 +126,15 @@ socket 文件权限为 0600，所在目录权限为 0700。启动时如果发现
 {"jsonrpc":"2.0","id":1,"method":"exec.run","params":{…},"client":{"name":"claude-code","session":"a1b2"}}
 ```
 
-CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` 读取；桌面端固定为 `desktop`。`hostlane mcp` 使用 `HOSTLANE_CLIENT`（默认 `mcp`，不接受 `cli` 和 `desktop`），会话取 `HOSTLANE_SESSION`，没有时用 MCP 客户端名加进程号（例如 `claude-code-4121`）。
+请求还可以带顶层成员 `token`（客户端令牌，见 A5）。守护进程在处理每个请求（包括 `events.subscribe`）之前先校验它：
+
+- 令牌有效时，`client.name` 改为登记的名称，并设置 `client.verified = true`（只由守护进程设置，客户端传入的值会被忽略）；审计日志和命令记录中保存 `verified`。
+- 令牌无效或已吊销时返回 `UNAUTHORIZED`。
+- 开启 `clients.require_token`（设置项）后，没有令牌的调用一律返回 `UNAUTHORIZED`，例外是 `cli`、`desktop` 调用方和 `daemon.status`。
+- `cli`、`desktop`、`unknown` 是保留名，不能登记。令牌格式为 `hlt_` 加 64 位十六进制数，只在创建时返回一次，库中只保存 SHA-256；`last_used_at` 最多每分钟更新一次。
+- `clients.create/revoke/configure` 只接受 `desktop` 或 `cli` 调用方，写入审计日志（不含令牌）。
+
+CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）、`HOSTLANE_SESSION` 和 `HOSTLANE_TOKEN` 读取；桌面端固定为 `desktop`。`hostlane mcp` 使用 `HOSTLANE_CLIENT`（默认 `mcp`，不接受 `cli` 和 `desktop`），会话取 `HOSTLANE_SESSION`，没有时用 MCP 客户端名加进程号（例如 `claude-code-4121`）。
 
 ### 事件订阅
 
@@ -132,68 +144,77 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 ← {"jsonrpc":"2.0","method":"event","params":{"type":"exec_output","id":"ex-…","stream":"stdout","data":"…"}}
 ```
 
-事件类型（`Event`）：`exec_started`、`exec_output`、`exec_finished`、`connection`（连接状态变化）、`file_changed`（文件被修改，不含 diff）、`audit_appended`（新增一条审计记录）、`tunnel`（隧道建立或状态变化；流量计数变化时每 2 秒推送一次）、`tunnel_removed`（临时隧道关闭或隧道被删除）、`approval_requested`（新的待审批调用）、`approval_updated`（审批被决定、过期、被使用，或调用方开始/停止等待）、`policy`（急停状态或待审批数量变化），以及 `lagged`（订阅方处理太慢，丢了 `skipped` 条事件，应重新拉取状态）。每条命令的每个流最多推送 1 MiB，完整内容用 `output.read` 读取。
+事件类型（`Event`）：`exec_started`、`exec_output`、`exec_finished`、`connection`（连接状态变化）、`file_changed`（文件被修改，不含 diff）、`audit_appended`（新增一条审计记录）、`tunnel`（隧道建立或状态变化；流量计数变化时每 2 秒推送一次）、`tunnel_removed`（临时隧道关闭或隧道被删除）、`approval_requested`（新的待审批调用）、`approval_updated`（审批被决定、过期、被使用，或调用方开始/停止等待）、`policy`（急停状态或待审批数量变化）、`job`（后台任务启动或状态变化），以及 `lagged`（订阅方处理太慢，丢了 `skipped` 条事件，应重新拉取状态）。每条命令的每个流最多推送 1 MiB，完整内容用 `output.read` 读取。
 
 ### 已实现的方法
 
-| 方法                  | 参数                    | 结果                           | 审计 |
-| --------------------- | ----------------------- | ------------------------------ | ---- |
-| `daemon.status`       | 无                      | `DaemonStatus`                 |      |
-| `daemon.shutdown`     | 无                      | `null`                         |      |
-| `hosts.list`          | 无                      | `HostsList`                    |      |
-| `hosts.connect`       | `HostParams`            | `Connection`                   | ✓    |
-| `hosts.disconnect`    | `HostParams`            | `{"disconnected":bool}`        | ✓    |
-| `hosts.trust`         | `TrustParams`           | `TrustResult`                  | ✓    |
-| `hosts.label`         | `HostLabelParams`       | `Host`                         | ✓    |
-| `hosts.add`           | `HostAddParams`         | `Host`                         | ✓    |
-| `hosts.update`        | `HostAddParams`         | `Host`                         | ✓    |
-| `hosts.remove`        | `HostParams`            | `HostRemoved`                  | ✓    |
-| `secrets.list`        | 无                      | `SecretsList`                  |      |
-| `secrets.set`         | `SecretSetParams`       | `SecretChanged`                | ✓    |
-| `secrets.delete`      | `SecretDeleteParams`    | `SecretChanged`                | ✓    |
-| `connections.list`    | 无                      | `ConnectionsList`              |      |
-| `exec.run`            | `ExecParams`            | `ExecResult`                   | ✓    |
-| `exec.list`           | `ExecListParams`        | `ExecList`                     |      |
-| `output.read`         | `OutputReadParams`      | `OutputChunk`                  |      |
-| `files.read`          | `FileReadParams`        | `FileContent`                  | ✓    |
-| `files.list`          | `FileListParams`        | `FileList`                     | ✓    |
-| `files.search`        | `FileSearchParams`      | `FileSearchResult`             | ✓    |
-| `files.write`         | `FileWriteParams`       | `FileChangeResult`             | ✓    |
-| `files.patch`         | `FilePatchParams`       | `FileChangeResult`             | ✓    |
-| `files.upload`        | `FileUploadParams`      | `FileChangeResult`             | ✓    |
-| `files.download`      | `FileDownloadParams`    | `FileDownloadResult`           | ✓    |
-| `files.change`        | `FileChangeParams`      | `FileChange`（含 diff）        |      |
-| `files.revert`        | `FileChangeParams`      | `FileChangeResult`             | ✓    |
-| `ports.list`          | `PortsListParams`       | `PortsList`                    | ✓    |
-| `ports.inspect`       | `PortParams`            | `PortsList`（只含该端口）      | ✓    |
-| `ports.check`         | `PortParams`            | `PortCheck`                    | ✓    |
-| `ports.find_free`     | `FindFreeParams`        | `FreePorts`                    | ✓    |
-| `ports.annotate`      | `PortAnnotateParams`    | `PortAnnotated`                | ✓    |
-| `tunnels.list`        | 无                      | `TunnelsList`                  |      |
-| `tunnels.open`        | `TunnelOpenParams`      | `TunnelOpened`                 | ✓    |
-| `tunnels.close`       | `TunnelCloseParams`     | `TunnelsClosed`                | ✓    |
-| `tunnels.start`       | `TunnelParams`          | `TunnelOpened`                 | ✓    |
-| `tunnels.update`      | `TunnelUpdateParams`    | `TunnelOpened`                 | ✓    |
-| `tunnels.delete`      | `TunnelParams`          | `TunnelsClosed`                | ✓    |
-| `services.logs`       | `ServiceLogsParams`     | `ServiceCommandResult`         | ✓    |
-| `services.start`      | `ServiceControlParams`  | `ServiceCommandResult`         | ✓    |
-| `services.stop`       | `ServiceControlParams`  | `ServiceCommandResult`         | ✓    |
-| `services.restart`    | `ServiceControlParams`  | `ServiceCommandResult`         | ✓    |
-| `processes.kill`      | `ProcessKillParams`     | `ServiceCommandResult`         | ✓    |
-| `audit.list`          | `AuditListParams`       | `AuditList`                    |      |
-| `approvals.list`      | `ApprovalsListParams`   | `ApprovalsList`                |      |
-| `approvals.get`       | `IdParams`              | `Approval`                     |      |
-| `approvals.resolve`   | `ApprovalResolveParams` | `Approval`                     | ✓    |
-| `policy.status`       | 无                      | `PolicyStatus`                 |      |
-| `policy.stop`         | `PolicyStopParams`      | `PolicyStopped`                | ✓    |
-| `policy.resume`       | 无                      | `PolicyStatus`                 | ✓    |
-| `policy.check`        | `PolicyCheckParams`     | `PolicyCheck`                  |      |
-| `policy.rules.list`   | 无                      | `PolicyRules`                  |      |
-| `policy.rules.add`    | `PolicyRuleAddParams`   | `PolicyRule`                   | ✓    |
-| `policy.rules.delete` | `IdParams`              | `{"deleted":id}`               | ✓    |
-| `events.subscribe`    | 无                      | `Subscribed`，之后推送 `Event` |      |
+| 方法                  | 参数                     | 结果                           | 审计 |
+| --------------------- | ------------------------ | ------------------------------ | ---- |
+| `daemon.status`       | 无                       | `DaemonStatus`                 |      |
+| `daemon.shutdown`     | 无                       | `null`                         |      |
+| `hosts.list`          | 无                       | `HostsList`                    |      |
+| `hosts.connect`       | `HostParams`             | `Connection`                   | ✓    |
+| `hosts.disconnect`    | `HostParams`             | `{"disconnected":bool}`        | ✓    |
+| `hosts.trust`         | `TrustParams`            | `TrustResult`                  | ✓    |
+| `hosts.label`         | `HostLabelParams`        | `Host`                         | ✓    |
+| `hosts.add`           | `HostAddParams`          | `Host`                         | ✓    |
+| `hosts.update`        | `HostAddParams`          | `Host`                         | ✓    |
+| `hosts.remove`        | `HostParams`             | `HostRemoved`                  | ✓    |
+| `secrets.list`        | 无                       | `SecretsList`                  |      |
+| `secrets.set`         | `SecretSetParams`        | `SecretChanged`                | ✓    |
+| `secrets.delete`      | `SecretDeleteParams`     | `SecretChanged`                | ✓    |
+| `connections.list`    | 无                       | `ConnectionsList`              |      |
+| `exec.run`            | `ExecParams`             | `ExecResult`                   | ✓    |
+| `exec.list`           | `ExecListParams`         | `ExecList`                     |      |
+| `output.read`         | `OutputReadParams`       | `OutputChunk`                  |      |
+| `files.read`          | `FileReadParams`         | `FileContent`                  | ✓    |
+| `files.list`          | `FileListParams`         | `FileList`                     | ✓    |
+| `files.search`        | `FileSearchParams`       | `FileSearchResult`             | ✓    |
+| `files.write`         | `FileWriteParams`        | `FileChangeResult`             | ✓    |
+| `files.patch`         | `FilePatchParams`        | `FileChangeResult`             | ✓    |
+| `files.upload`        | `FileUploadParams`       | `FileChangeResult`             | ✓    |
+| `files.download`      | `FileDownloadParams`     | `FileDownloadResult`           | ✓    |
+| `files.change`        | `FileChangeParams`       | `FileChange`（含 diff）        |      |
+| `files.revert`        | `FileChangeParams`       | `FileChangeResult`             | ✓    |
+| `ports.list`          | `PortsListParams`        | `PortsList`                    | ✓    |
+| `ports.inspect`       | `PortParams`             | `PortsList`（只含该端口）      | ✓    |
+| `ports.check`         | `PortParams`             | `PortCheck`                    | ✓    |
+| `ports.find_free`     | `FindFreeParams`         | `FreePorts`                    | ✓    |
+| `ports.annotate`      | `PortAnnotateParams`     | `PortAnnotated`                | ✓    |
+| `tunnels.list`        | 无                       | `TunnelsList`                  |      |
+| `tunnels.open`        | `TunnelOpenParams`       | `TunnelOpened`                 | ✓    |
+| `tunnels.close`       | `TunnelCloseParams`      | `TunnelsClosed`                | ✓    |
+| `tunnels.start`       | `TunnelParams`           | `TunnelOpened`                 | ✓    |
+| `tunnels.update`      | `TunnelUpdateParams`     | `TunnelOpened`                 | ✓    |
+| `tunnels.delete`      | `TunnelParams`           | `TunnelsClosed`                | ✓    |
+| `services.logs`       | `ServiceLogsParams`      | `ServiceCommandResult`         | ✓    |
+| `services.start`      | `ServiceControlParams`   | `ServiceCommandResult`         | ✓    |
+| `services.stop`       | `ServiceControlParams`   | `ServiceCommandResult`         | ✓    |
+| `services.restart`    | `ServiceControlParams`   | `ServiceCommandResult`         | ✓    |
+| `processes.kill`      | `ProcessKillParams`      | `ServiceCommandResult`         | ✓    |
+| `audit.list`          | `AuditListParams`        | `AuditList`                    |      |
+| `approvals.list`      | `ApprovalsListParams`    | `ApprovalsList`                |      |
+| `approvals.get`       | `IdParams`               | `Approval`                     |      |
+| `approvals.resolve`   | `ApprovalResolveParams`  | `Approval`                     | ✓    |
+| `policy.status`       | 无                       | `PolicyStatus`                 |      |
+| `policy.stop`         | `PolicyStopParams`       | `PolicyStopped`                | ✓    |
+| `policy.resume`       | 无                       | `PolicyStatus`                 | ✓    |
+| `policy.check`        | `PolicyCheckParams`      | `PolicyCheck`                  |      |
+| `policy.rules.list`   | 无                       | `PolicyRules`                  |      |
+| `policy.rules.add`    | `PolicyRuleAddParams`    | `PolicyRule`                   | ✓    |
+| `policy.rules.delete` | `IdParams`               | `{"deleted":id}`               | ✓    |
+| `jobs.start`          | `JobStartParams`         | `Job`                          | ✓    |
+| `jobs.list`           | `JobsListParams`         | `JobsList`                     |      |
+| `jobs.status`         | `JobStatusParams`        | `Job`                          |      |
+| `jobs.logs`           | `JobLogsParams`          | `JobLogs`                      | ✓    |
+| `jobs.cancel`         | `JobParams`              | `Job`                          | ✓    |
+| `clients.list`        | 无                       | `ClientsList`                  |      |
+| `clients.create`      | `ClientNameParams`       | `ClientCreated`                | ✓    |
+| `clients.revoke`      | `ClientNameParams`       | `RegisteredClient`             | ✓    |
+| `clients.configure`   | `ClientsConfigureParams` | `ClientsList`                  | ✓    |
+| `events.subscribe`    | 无                       | `Subscribed`，之后推送 `Event` |      |
 
-审计列打勾的方法中，访问服务器的那些（`method::GATED`：`hosts.connect` 到 `processes.kill`，不含主机和凭据管理）还要先经过策略检查，见[策略与审批](#策略与审批)。
+审计列打勾的方法中，访问服务器的那些（`method::GATED`：`hosts.connect` 到 `processes.kill`，以及 `jobs.start/logs/cancel`；不含主机、凭据和客户端管理）还要先经过策略检查，见[策略与审批](#策略与审批)。
 
 `exec.run` 的要点：
 
@@ -269,6 +290,19 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 - 保存的隧道（`save: true`）写入 `tunnels` 表，`auto_start` 默认为 true，守护进程启动时恢复。未保存的隧道只在守护进程运行期间存在；除桌面端外，调用方创建的未保存隧道默认 1 小时后关闭（`ttl_secs`，最长 24 小时），到期关闭会以 `hostlane` 为调用方写入审计日志。`tunnels.close` 传 `session` 时关闭该会话创建的全部临时隧道，agent 应在会话结束时调用。
 - `tunnels.close` 停止隧道：临时隧道被移除，保存的隧道变为 `stopped`；`tunnels.delete` 同时删除保存的配置。`tunnels.update` 修改本机端口或绑定地址时，运行中的隧道会换到新端口（失败时恢复原端口）；修改远程地址对之后的新连接生效；`save: true` 会保存临时隧道并取消到期时间。
 
+后台任务（`jobs.*`）的要点：
+
+- `jobs.start` 在服务器上创建 `~/.hostlane/jobs/<id>/`，写入 `cmd`（命令，`cwd` 和 `env` 的拼法与 `exec.run` 相同）和包装脚本 `run.sh`，然后启动包装脚本：有 `tmux` 时放进分离的会话 `hl-<id>`，否则在后台运行并忽略 SIGHUP（相当于 `nohup`）。`backend` 可以强制指定，指定 `tmux` 而服务器没有安装时启动失败。所有辅助命令都用 `sh -c` 执行，不依赖用户的登录 shell。
+- 包装脚本把命令的 stdout 和 stderr 合并写入 `out`，把 pid 和进程组写入 `pid`、`pgid`，结束时把退出码写入 `exit`。任务不受 SSH 断线和守护进程重启影响，状态总是从这些文件读回。
+- 状态：`running`、`exited`（有 `exit` 文件）、`cancelled`（由 `jobs.cancel` 停止）、`lost`（进程已不在但没有退出码，例如服务器重启）。`jobs.list` 只返回本机记录的最近状态；`jobs.status` 会到服务器上读取，`wait_ms`（最长 120 秒）可以等待任务结束。守护进程每 10 秒检查一次已连接主机上运行中的任务，状态变化时推送 `job` 事件。
+- `jobs.logs` 按字节偏移读取 `out`：传 `offset` 从该位置读，否则返回最后 `tail_lines` 行（默认 100）；每次最多 `limit` 字节（默认 64 KiB，最大 1 MiB），按 UTF-8 边界截断。结果中的 `next_offset` 用于下次续读，`complete` 表示任务已结束且已读到末尾；`wait_ms` 可以等待新输出。
+- `jobs.cancel` 先向进程组发 TERM，5 秒后仍在运行则发 KILL，再关闭 tmux 会话。`policy.stop` 会取消 agent 启动的全部运行中任务（`PolicyStopped.cancelled_jobs`）。
+- 策略：`jobs.start` 按命令分级（与 `exec.run` 相同）；`jobs.logs` 为 L0，`jobs.cancel` 为 L1，二者都按任务所在的主机匹配规则。审计日志记录命令，不记录日志内容。
+
+### 不可信数据（S6）
+
+含服务器文本的结果是不可信的：服务器上的日志和文件可能包含针对 agent 的提示注入。`hostlane_protocol::untrusted_fields(method)` 列出每个方法中这样的字段：`exec.run`、`services.*`、`processes.kill` 的 `stdout` / `stderr`，`output.read` 和 `jobs.logs` 的 `data`，`files.read` 的 `content`，`files.search` 的 `matches`。守护进程在这些方法的结果中加一个 `untrusted` 成员（字段名数组）；CLI 的 `--json` 输出也带它。MCP 工具结果在 JSON 前面加一段警告（`UNTRUSTED_NOTE`），MCP 的 `instructions` 中也有同样的说明。
+
 ### 策略与审批
 
 每次调用受管控的方法（`method::GATED`）时，守护进程按以下顺序处理：
@@ -292,8 +326,8 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 其他约定：
 
 - 放行的调用在审计日志中记录 `risk` 和 `approver`（`desktop`、`cli`、`rule <id>` 或 `session grant`），被放行的命令在 `ExecRecord.approver` 中也有记录。
-- `approvals.resolve`、`policy.resume`、`policy.rules.add` / `delete`、`hosts.label`、`hosts.add/update/remove` 和 `secrets.set/delete` 只接受 `desktop` 或 `cli` 调用方。这只能防止 agent 误操作：调用方名称由客户端自己声明，不是安全边界。`policy.stop` 任何调用方都可以使用。
-- `policy.stop` 拒绝所有待审批调用，关闭 agent 创建的隧道（桌面端创建的、已保存但未运行的隧道不受影响），终止 agent 正在运行的命令。急停状态保存在 `settings` 表中，守护进程重启后仍然有效，此时也不会恢复 agent 创建的保存隧道。
+- `approvals.resolve`、`policy.resume`、`policy.rules.add` / `delete`、`hosts.label`、`hosts.add/update/remove`、`secrets.set/delete` 和 `clients.create/revoke/configure` 只接受 `desktop` 或 `cli` 调用方。没有令牌时调用方名称由客户端自己声明，这只能防止 agent 误操作，不是安全边界；登记的 agent 带令牌调用时名称经过验证，开启 `clients.require_token` 后，agent 不带令牌就无法调用。`policy.stop` 任何调用方都可以使用。
+- `policy.stop` 拒绝所有待审批调用，关闭 agent 创建的隧道（桌面端创建的、已保存但未运行的隧道不受影响），终止 agent 正在运行的命令，取消 agent 启动的后台任务。急停状态保存在 `settings` 表中，守护进程重启后仍然有效，此时也不会恢复 agent 创建的保存隧道。
 - 主机的环境和标签来自 `~/.ssh/config` 中 `Host` 块内的注释 `# hostlane: env=prod tags=web,eu`，也可以用 `hosts.label` 在本机覆盖（保存在 `host_labels` 表中）。
 - `policy.check` 返回某个调用的风险和决定，不执行也不创建审批。
 
@@ -323,6 +357,8 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 | `FORWARDING_DENIED`                                                                    | -32018          | SSH 服务器禁止 TCP 转发（`AllowTcpForwarding no`）                    |
 | `APPROVAL_NOT_FOUND`                                                                   | -32019          | 审批 ID 不存在（守护进程重启后会清空）                                |
 | `RULE_NOT_FOUND`                                                                       | -32020          | 规则 ID 不存在                                                        |
+| `UNAUTHORIZED`                                                                         | -32021          | 令牌无效或已吊销，或开启了 `clients.require_token` 而调用没有带令牌   |
+| `JOB_NOT_FOUND`                                                                        | -32022          | 后台任务 ID 不存在                                                    |
 
 ### 新增一个方法
 
@@ -344,16 +380,17 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）和 `HOSTLANE_SESSION` �
 
 `hostlane mcp` 用 [rmcp](https://crates.io/crates/rmcp) 实现 stdio MCP Server，由 agent 启动，生命周期跟随 agent。它不持有任何状态，每次工具调用都通过 `hostlane_core::client::Client` 转发到守护进程，因此策略、审批、审计、急停与 CLI 完全一致。
 
-- **工具映射**：`mcp.rs` 中的 `specs` 是一张表，每个工具对应一个守护进程方法，并声明 JSON Schema。调用时只转发 schema 中声明的参数；受管控的方法（`method::GATED`）额外接受 `async`、`ticket_id` 和 `approval_timeout_secs`。`edit_file` 和 `apply_diff` 都映射到 `files.patch`，分别只暴露 `edits` 和 `diff`。`check_policy` 接受工具名和参数，先翻译成方法和参数再调用 `policy.check`。`hosts` 会顺带返回 `connections.list` 的结果。
-- **不开放的方法**：`approvals.resolve`、`policy.resume`、`policy.rules.*`、`hosts.trust`、`hosts.label`、`hosts.add/update/remove`、`secrets.*`、`policy.stop`、`daemon.shutdown`，以及管理保存隧道的 `tunnels.start/update/delete`（agent 只开临时隧道，用 `close_tunnel` 关闭）。单元测试会检查只能由人执行的方法没有被暴露。
-- **结果**：成功时返回 `structuredContent`（守护进程的原始结果），`content` 是同一份 JSON 文本。失败时返回 `isError: true` 的工具结果，内容为 `{"error":{"kind","message","hint","details"}}`，和 CLI 的 `--json` 错误格式相同；未知工具名返回协议错误 `-32602`。
+- **工具映射**：`mcp.rs` 中的 `specs` 是一张表，每个工具对应一个守护进程方法，并声明 JSON Schema。调用时只转发 schema 中声明的参数；受管控的方法（`method::GATED`）额外接受 `async`、`ticket_id` 和 `approval_timeout_secs`。`edit_file` 和 `apply_diff` 都映射到 `files.patch`，分别只暴露 `edits` 和 `diff`。`check_policy` 接受工具名和参数，先翻译成方法和参数再调用 `policy.check`。`hosts` 会顺带返回 `connections.list` 的结果。后台任务对应 `job_start`、`job_status`、`job_logs`、`job_cancel` 和 `list_jobs`。
+- **不开放的方法**：`approvals.resolve`、`policy.resume`、`policy.rules.*`、`hosts.trust`、`hosts.label`、`hosts.add/update/remove`、`secrets.*`、`clients.*`、`policy.stop`、`daemon.shutdown`，以及管理保存隧道的 `tunnels.start/update/delete`（agent 只开临时隧道，用 `close_tunnel` 关闭）。单元测试会检查只能由人执行的方法没有被暴露。
+- **结果**：成功时返回 `structuredContent`（守护进程的原始结果），`content` 是同一份 JSON 文本；结果带 `untrusted` 时，`content` 前面多一段不可信数据的警告。失败时返回 `isError: true` 的工具结果，内容为 `{"error":{"kind","message","hint","details"}}`，和 CLI 的 `--json` 错误格式相同；未知工具名返回协议错误 `-32602`。
 - **审批**：默认阻塞等待（与 CLI 非交互模式相同）；`async: true` 时立即返回 `APPROVAL_REQUIRED` 和 `details.ticket_id`。MCP 客户端可能有自己的工具超时（例如 Codex 的 `tool_timeout_sec`），接入页的配置片段把它设为 600 秒。
+- **令牌**：`HOSTLANE_TOKEN` 有值时随每个请求发送，调用方按令牌登记的名称记录。
 - **守护进程**：启动时和遇到 `DAEMON_NOT_RUNNING` 时会调用与 `hostlane daemon start` 相同的逻辑拉起守护进程（服务已安装时交给服务管理器），然后重试一次。stdout 只用于 MCP 协议，不输出日志。
 
 ## 测试与 CI
 
 - `cargo test --workspace`：单元测试，同时重新生成 `apps/desktop/src/shared/protocol/`。
-- `python3 scripts/e2e.py [hostlane]`：在 127.0.0.1 上以当前用户起一个临时 sshd（端口 `$E2E_PORT`，默认 2222；自己的主机密钥、用户密钥和 `sshd_config`），`HOSTLANE_SOCKET`、`HOSTLANE_DATA_DIR`、`HOSTLANE_SSH_CONFIG` 都指向临时目录，然后用 CLI 和 MCP 跑完整流程：指纹校验、exec、输出截断、文件读写和撤销、端口发现和 HTTP 探测、隧道、审批和 ticket、急停、审计。`E2E_KEEP=1` 保留临时目录。
+- `python3 scripts/e2e.py [hostlane]`：在 127.0.0.1 上以当前用户起一个临时 sshd（端口 `$E2E_PORT`，默认 2222；自己的主机密钥、用户密钥和 `sshd_config`），`HOSTLANE_SOCKET`、`HOSTLANE_DATA_DIR`、`HOSTLANE_SSH_CONFIG` 都指向临时目录，然后用 CLI 和 MCP 跑完整流程：指纹校验、exec、输出截断、文件读写和撤销、端口发现和 HTTP 探测、隧道、审批和 ticket、急停、审计、后台任务（nohup；服务器有 `tmux` 时再测 tmux）、客户端令牌、MCP 的不可信数据标记。`E2E_KEEP=1` 保留临时目录。
 - `apps/desktop/scripts/smoke.mjs`：启动打包后的桌面端（独立的数据目录和 `--user-data-dir`），检查页面挂载、主机页显示 `ssh_config` 中的主机、内置的守护进程已启动，并截图。
 - `.github/workflows/ci.yml`（push 到 main 和 PR）：
   - Linux 和 macOS：`cargo fmt --check`、`cargo clippy -D warnings`、`cargo test`、检查生成的 TS 类型已提交、`e2e.py`；Linux 上再跑 `bench.py`，结果写到 job summary。

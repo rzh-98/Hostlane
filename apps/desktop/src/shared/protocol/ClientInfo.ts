@@ -12,4 +12,9 @@ name: string,
 /**
  * Groups calls from one agent session (`HOSTLANE_SESSION`).
  */
-session?: string, };
+session?: string, 
+/**
+ * Set by the daemon when the call carried the token of a client registered with
+ * `clients.create`; `name` is then the registered name. Never trusted from callers.
+ */
+verified?: boolean, };

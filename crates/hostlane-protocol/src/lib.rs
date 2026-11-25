@@ -6,11 +6,13 @@
 //! `apps/desktop/src/shared/protocol/`.
 
 mod audit;
+mod clients;
 mod error;
 mod events;
 mod exec;
 mod files;
 mod hosts;
+mod jobs;
 mod policy;
 mod ports;
 mod rpc;
@@ -18,8 +20,12 @@ mod secrets;
 mod services;
 mod status;
 mod tunnels;
+mod untrusted;
 
 pub use audit::{AuditEntry, AuditList, AuditListParams, AuditOutcome};
+pub use clients::{
+    ClientCreated, ClientNameParams, ClientsConfigureParams, ClientsList, RegisteredClient,
+};
 pub use error::{ErrorKind, RpcError, RpcErrorData};
 pub use events::{Event, Subscribed};
 pub use exec::{
@@ -35,6 +41,10 @@ pub use files::{
 pub use hosts::{
     AuthFailure, Connection, ConnectionState, ConnectionsList, Host, HostAddParams, HostEnv,
     HostKeyInfo, HostParams, HostRemoved, HostSource, HostsList, TrustParams, TrustResult,
+};
+pub use jobs::{
+    Job, JobBackend, JobLogs, JobLogsParams, JobParams, JobStartParams, JobState, JobStatusParams,
+    JobsList, JobsListParams,
 };
 pub use policy::{
     Approval, ApprovalResolveParams, ApprovalScope, ApprovalState, ApprovalsList,
@@ -59,6 +69,7 @@ pub use tunnels::{
     Tunnel, TunnelCloseParams, TunnelOpenParams, TunnelOpened, TunnelParams, TunnelState,
     TunnelUpdateParams, TunnelsClosed, TunnelsList,
 };
+pub use untrusted::{UNTRUSTED_MEMBER, UNTRUSTED_NOTE, untrusted_fields};
 
 /// Bumped whenever a breaking change is made to the wire format.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -107,6 +118,15 @@ pub mod method {
     pub const SERVICES_STOP: &str = "services.stop";
     pub const SERVICES_RESTART: &str = "services.restart";
     pub const PROCESSES_KILL: &str = "processes.kill";
+    pub const JOBS_START: &str = "jobs.start";
+    pub const JOBS_LIST: &str = "jobs.list";
+    pub const JOBS_STATUS: &str = "jobs.status";
+    pub const JOBS_LOGS: &str = "jobs.logs";
+    pub const JOBS_CANCEL: &str = "jobs.cancel";
+    pub const CLIENTS_LIST: &str = "clients.list";
+    pub const CLIENTS_CREATE: &str = "clients.create";
+    pub const CLIENTS_REVOKE: &str = "clients.revoke";
+    pub const CLIENTS_CONFIGURE: &str = "clients.configure";
     pub const APPROVALS_LIST: &str = "approvals.list";
     pub const APPROVALS_GET: &str = "approvals.get";
     pub const APPROVALS_RESOLVE: &str = "approvals.resolve";
@@ -155,6 +175,9 @@ pub mod method {
         SERVICES_STOP,
         SERVICES_RESTART,
         PROCESSES_KILL,
+        JOBS_START,
+        JOBS_LOGS,
+        JOBS_CANCEL,
     ];
 
     /// Every method the daemon currently implements.
@@ -201,6 +224,15 @@ pub mod method {
         SERVICES_STOP,
         SERVICES_RESTART,
         PROCESSES_KILL,
+        JOBS_START,
+        JOBS_LIST,
+        JOBS_STATUS,
+        JOBS_LOGS,
+        JOBS_CANCEL,
+        CLIENTS_LIST,
+        CLIENTS_CREATE,
+        CLIENTS_REVOKE,
+        CLIENTS_CONFIGURE,
         APPROVALS_LIST,
         APPROVALS_GET,
         APPROVALS_RESOLVE,

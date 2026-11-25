@@ -17,7 +17,9 @@ use hostlane_protocol::{
 };
 use serde_json::{Value, json};
 
+mod clients;
 mod files;
+mod jobs;
 mod manage;
 mod mcp;
 mod policy;
@@ -108,6 +110,10 @@ enum Command {
     Policy(policy::PolicyCommand),
     #[command(flatten)]
     Manage(manage::ManageCommand),
+    #[command(flatten)]
+    Jobs(jobs::JobsCommand),
+    #[command(flatten)]
+    Clients(clients::ClientsCommand),
     /// Open the pooled connection to a host and show its host key.
     Connect { host: String },
     /// Trust a host's key after you have verified its fingerprint.
@@ -222,7 +228,13 @@ fn client_info() -> ClientInfo {
     ClientInfo {
         name: non_empty("HOSTLANE_CLIENT").unwrap_or_else(|| "cli".into()),
         session: non_empty("HOSTLANE_SESSION"),
+        verified: false,
     }
+}
+
+/// The agent's client token (`HOSTLANE_TOKEN`), if any.
+pub(crate) fn client_token() -> Option<String> {
+    std::env::var("HOSTLANE_TOKEN").ok()
 }
 
 async fn run(cli: Cli) -> Result<ExitCode> {
@@ -238,10 +250,15 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         approval.insert("approval_timeout_secs".into(), json!(secs));
     }
     let info = client_info();
-    let interactive =
-        info.name == "cli" && std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    let client = Client::new(&socket)
+        .with_token(client_token())
+        .with_approval(approval);
+    let interactive = info.name == "cli"
+        && !client.has_token()
+        && std::io::stdin().is_terminal()
+        && std::io::stderr().is_terminal();
     let waits = !cli.asynchronous && !interactive;
-    let mut client = Client::new(&socket).with_info(info).with_approval(approval);
+    let mut client = client.with_info(info);
     if interactive {
         client = client.with_approver(Arc::new(policy::ask));
     }
@@ -280,6 +297,8 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Command::Tunnels(command) => tunnels::run(&client, command, json).await?,
         Command::Policy(command) => policy::run(&client, command, json).await?,
         Command::Manage(command) => return manage::run(&client, command, json).await,
+        Command::Jobs(command) => return jobs::run(&client, command, json).await,
+        Command::Clients(command) => clients::run(&client, command, json).await?,
         Command::Connect { host } => connect(&client, &host, json).await?,
         Command::Trust { host, fingerprint } => trust(&client, &host, fingerprint, json).await?,
         Command::Disconnect { host } => {
@@ -363,7 +382,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn parse_env(pairs: &[String]) -> Result<Option<BTreeMap<String, String>>> {
+pub(crate) fn parse_env(pairs: &[String]) -> Result<Option<BTreeMap<String, String>>> {
     if pairs.is_empty() {
         return Ok(None);
     }
@@ -483,7 +502,7 @@ async fn exec(client: &Client, params: ExecParams, json: bool, waits: bool) -> R
         .call_as(method::EXEC_RUN, serde_json::to_value(&params)?)
         .await?;
     if json {
-        print_json(&result);
+        print_untrusted(method::EXEC_RUN, &result);
         return Ok(ExitCode::SUCCESS);
     }
     let mut stdout = std::io::stdout();
@@ -536,7 +555,7 @@ async fn output(
         .call_as(method::OUTPUT_READ, serde_json::to_value(&params)?)
         .await?;
     if json {
-        print_json(&chunk);
+        print_untrusted(method::OUTPUT_READ, &chunk);
         return Ok(());
     }
     let mut stdout = std::io::stdout();
@@ -838,6 +857,7 @@ async fn watch(client: &Client, host: Option<String>, json: bool) -> Result<()> 
             Event::ApprovalRequested { approval } | Event::ApprovalUpdated { approval } => {
                 approval.host.clone()
             }
+            Event::Job { job } => Some(job.host.clone()),
             Event::TunnelRemoved { .. } | Event::Lagged { .. } | Event::Policy { .. } => None,
         };
         if let (Some(filter), Some(event_host)) = (&host, &event_host)
@@ -903,6 +923,24 @@ async fn watch(client: &Client, host: Option<String>, json: bool) -> Result<()> 
                     change.host, change.client.name, change.operation, change.path, change.id
                 );
             }
+            Event::Job { job } if job.state != hostlane_protocol::JobState::Running => {
+                println!(
+                    "[{}] job {} ended: {:?}{}",
+                    job.host,
+                    job.id,
+                    job.state,
+                    job.exit_code
+                        .map(|c| format!(" (exit {c})"))
+                        .unwrap_or_default()
+                );
+            }
+            Event::Job { job } if job.checked_at == job.started_at => {
+                println!(
+                    "[{}] {} started job {}: {}",
+                    job.host, job.client.name, job.id, job.command
+                );
+            }
+            Event::Job { .. } => {}
             Event::Lagged { skipped } => eprintln!("(missed {skipped} events)"),
         }
     }
@@ -1073,6 +1111,19 @@ pub(crate) fn output_value(json: bool, value: Value, text: &str) {
     } else {
         println!("{text}");
     }
+}
+
+/// Prints a result as JSON with the `untrusted` member listing its server-provided
+/// fields (S6), which the typed result drops.
+pub(crate) fn print_untrusted(method: &str, value: &impl serde::Serialize) {
+    let mut value = serde_json::to_value(value).expect("serializable");
+    let fields = hostlane_protocol::untrusted_fields(method);
+    if let Value::Object(object) = &mut value
+        && !fields.is_empty()
+    {
+        object.insert(hostlane_protocol::UNTRUSTED_MEMBER.into(), json!(fields));
+    }
+    print_json(&value);
 }
 
 fn print_json(value: &impl serde::Serialize) {

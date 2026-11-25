@@ -38,6 +38,7 @@ pub type Approver = Arc<dyn Fn(&Approval) -> Answer + Send + Sync>;
 pub struct Client {
     socket_path: PathBuf,
     info: Option<ClientInfo>,
+    token: Option<String>,
     approval: serde_json::Map<String, Value>,
     approver: Option<Approver>,
 }
@@ -74,6 +75,7 @@ impl Client {
         Self {
             socket_path: socket_path.into(),
             info: None,
+            token: None,
             approval: serde_json::Map::new(),
             approver: None,
         }
@@ -99,6 +101,18 @@ impl Client {
         self
     }
 
+    /// Client token from `clients.create`, sent with every request (`HOSTLANE_TOKEN`).
+    pub fn with_token(mut self, token: Option<String>) -> Self {
+        self.token = token
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty());
+        self
+    }
+
+    pub fn has_token(&self) -> bool {
+        self.token.is_some()
+    }
+
     fn request(&self, method: &str, mut params: Value) -> Result<String, ClientError> {
         if method::GATED.contains(&method)
             && let Some(object) = params.as_object_mut()
@@ -109,6 +123,7 @@ impl Client {
         }
         let mut request = Request::new(1, method, params);
         request.client = self.info.clone();
+        request.token = self.token.clone();
         serde_json::to_string(&request).map_err(|e| ClientError::Protocol(e.to_string()))
     }
 

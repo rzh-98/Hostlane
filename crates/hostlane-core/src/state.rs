@@ -6,7 +6,9 @@ use hostlane_protocol::{DaemonStatus, PROTOCOL_VERSION, RpcError};
 use tokio::sync::Notify;
 
 use crate::catalog::Catalog;
+use crate::clients::Clients;
 use crate::events::EventBus;
+use crate::jobs::Jobs;
 use crate::policy::Policy;
 use crate::pool::Pool;
 use crate::secrets::Secrets;
@@ -60,6 +62,8 @@ pub struct Daemon {
     pub(crate) pool: Arc<Pool>,
     pub(crate) tunnels: Arc<Tunnels>,
     pub(crate) policy: Arc<Policy>,
+    pub(crate) jobs: Arc<Jobs>,
+    pub(crate) clients: Clients,
     pub(crate) shutdown: Notify,
 }
 
@@ -105,6 +109,13 @@ impl Daemon {
             catalog.clone(),
         ));
         let policy = Arc::new(Policy::new(store.clone(), events.clone()));
+        let jobs = Arc::new(Jobs::new(
+            pool.clone(),
+            catalog.clone(),
+            store.clone(),
+            events.clone(),
+        ));
+        let clients = Clients::new(store.clone());
         Ok(Self {
             started: Instant::now(),
             started_at: now_ms(),
@@ -118,6 +129,8 @@ impl Daemon {
             pool,
             tunnels,
             policy,
+            jobs,
+            clients,
             events,
             shutdown: Notify::new(),
         })
@@ -141,6 +154,8 @@ impl Daemon {
         });
         tokio::spawn(self.pool.clone().maintain());
         self.policy.load().await;
+        self.clients.load().await;
+        tokio::spawn(self.jobs.clone().maintain());
         tokio::spawn(self.policy.clone().maintain());
         self.tunnels.restore(self.policy.is_stopped()).await;
         tokio::spawn(self.tunnels.clone().maintain());

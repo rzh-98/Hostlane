@@ -45,6 +45,9 @@ pub enum ErrorKind {
     ForwardingDenied,
     ApprovalNotFound,
     RuleNotFound,
+    /// The client token is unknown or revoked, or the daemon requires one and none was sent.
+    Unauthorized,
+    JobNotFound,
 }
 
 impl ErrorKind {
@@ -77,6 +80,8 @@ impl ErrorKind {
             Self::ForwardingDenied => -32018,
             Self::ApprovalNotFound => -32019,
             Self::RuleNotFound => -32020,
+            Self::Unauthorized => -32021,
+            Self::JobNotFound => -32022,
         }
     }
 }

@@ -9,11 +9,13 @@ pub mod server;
 pub mod ssh_config;
 
 mod catalog;
+mod clients;
 mod events;
 mod exec;
 mod files;
 mod handlers;
 mod hosts;
+mod jobs;
 mod patch;
 mod policy;
 mod pool;

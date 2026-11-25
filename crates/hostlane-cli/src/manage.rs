@@ -332,7 +332,7 @@ async fn command_result(
         .call_as(method, serde_json::to_value(params)?)
         .await?;
     if json {
-        print_json(&reply);
+        crate::print_untrusted(method, &reply);
         return Ok(ExitCode::SUCCESS);
     }
     let result = &reply.result;

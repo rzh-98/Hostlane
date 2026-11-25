@@ -127,7 +127,8 @@ function outcomeBadge(entry: AuditEntry) {
 }
 
 function clientLabel(entry: AuditEntry): string {
-  return entry.client.session ? `${entry.client.name} · ${entry.client.session}` : entry.client.name
+  const name = entry.client.verified ? `${entry.client.name} ✓` : entry.client.name
+  return entry.client.session ? `${name} · ${entry.client.session}` : name
 }
 
 export function AuditPage() {
@@ -389,7 +390,10 @@ function AuditDetail({ entry, onViewOutput, onViewDiff }: AuditDetailProps) {
       >
         <Row label="时间" value={new Date(entry.started_at).toLocaleString()} />
         <Row label="耗时" value={formatDuration(entry.finished_at - entry.started_at)} />
-        <Row label="来源" value={clientLabel(entry)} />
+        <Row
+          label="来源"
+          value={`${clientLabel(entry)}${entry.client.verified ? '（令牌已验证）' : ''}`}
+        />
         <Row label="主机" value={entry.host ?? '—'} />
         <Row label="风险" value={entry.risk ? riskLabels[entry.risk].label : '—'} />
         <Row label="审批人" value={entry.approver ? approverLabel(entry.approver) : '无需审批'} />

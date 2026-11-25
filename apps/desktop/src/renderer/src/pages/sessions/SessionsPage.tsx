@@ -22,6 +22,8 @@ import {
   StatusDot
 } from '@/ui'
 import type { ExecRecord } from '@shared/protocol/ExecRecord'
+import { handleJobEvent, jobsStore, loadJobs, resetJobs } from './jobs'
+import { JobsView } from './JobsView'
 import {
   ensureOutput,
   handleSessionEvent,
@@ -32,10 +34,13 @@ import {
 } from './store'
 
 type GroupBy = 'host' | 'session'
+type View = 'commands' | 'jobs'
 
 const ALL = '*'
 
-const prefs = createStore<{ groupBy: GroupBy }>('sessions.prefs', { groupBy: 'host' })
+const prefs = createStore<{ groupBy: GroupBy; view?: View }>('sessions.prefs', {
+  groupBy: 'host'
+})
 
 function sessionKey(exec: ExecRecord): string {
   return exec.client.session ? `${exec.client.name} · ${exec.client.session}` : exec.client.name
@@ -55,16 +60,27 @@ interface Group {
 export function SessionsPage() {
   const { phase } = daemonStore.use()
   const { execs, outputs, loaded, error } = sessionsStore.use()
-  const { groupBy } = prefs.use()
+  const { groupBy, view = 'commands' } = prefs.use()
+  const jobs = jobsStore.use()
   const [selected, setSelected] = useState(ALL)
   const [viewing, setViewing] = useState<ExecRecord | null>(null)
   const online = phase === 'online'
 
   useHostlaneEvent(handleSessionEvent)
+  useHostlaneEvent(handleJobEvent)
   useEffect(() => {
-    if (online) void loadSessions()
+    if (online) {
+      void loadSessions()
+      void loadJobs()
+    }
   }, [online])
-  useEffect(() => resetSessions, [])
+  useEffect(
+    () => () => {
+      resetSessions()
+      resetJobs()
+    },
+    []
+  )
 
   const ordered = useMemo(
     () => Object.values(execs).sort((a, b) => a.started_at - b.started_at),
@@ -87,43 +103,68 @@ export function SessionsPage() {
   const current = selected === ALL || !groups.some((g) => g.key === selected) ? ALL : selected
   const shown = current === ALL ? ordered : ordered.filter((e) => groupKey(e, groupBy) === current)
   const running = ordered.filter((e) => e.status === 'running').length
+  const jobList = Object.values(jobs.jobs)
+  const runningJobs = jobList.filter((job) => job.state === 'running').length
+  const subtitle =
+    view === 'jobs'
+      ? runningJobs > 0
+        ? `${runningJobs} 个任务运行中`
+        : jobs.loaded
+          ? `${jobList.length} 个任务`
+          : undefined
+      : running > 0
+        ? `${running} 条命令运行中`
+        : loaded
+          ? `${ordered.length} 条命令`
+          : undefined
+  const pageError = view === 'jobs' ? jobs.error : error
 
   return (
     <Page>
-      <Toolbar
-        title="会话"
-        subtitle={
-          running > 0 ? `${running} 条命令运行中` : loaded ? `${ordered.length} 条命令` : undefined
-        }
-      >
-        <SegmentedControl
-          aria-label="分组方式"
-          value={groupBy}
-          onValueChange={(value) => {
-            prefs.set({ groupBy: value })
-            setSelected(ALL)
-          }}
+      <Toolbar title="会话" subtitle={subtitle}>
+        <SegmentedControl<View>
+          aria-label="内容"
+          value={view}
+          onValueChange={(value) => prefs.set({ view: value })}
           options={[
-            { value: 'host', label: '按主机' },
-            { value: 'session', label: '按会话' }
+            { value: 'commands', label: '命令' },
+            { value: 'jobs', label: runningJobs > 0 ? `后台任务 ${runningJobs}` : '后台任务' }
           ]}
         />
+        {view === 'commands' && (
+          <SegmentedControl
+            aria-label="分组方式"
+            value={groupBy}
+            onValueChange={(value) => {
+              prefs.set({ groupBy: value })
+              setSelected(ALL)
+            }}
+            options={[
+              { value: 'host', label: '按主机' },
+              { value: 'session', label: '按会话' }
+            ]}
+          />
+        )}
         <IconButton
           label="刷新"
           icon={<RefreshCw />}
           disabled={!online}
-          onClick={() => void loadSessions()}
+          onClick={() => void (view === 'jobs' ? loadJobs() : loadSessions())}
         />
       </Toolbar>
 
-      {online && error && (
+      {online && pageError && (
         <Notice tone="danger" icon={<TriangleAlert />}>
-          {error.message}
+          {pageError.message}
         </Notice>
       )}
 
       {!online ? (
         <DaemonOffline />
+      ) : view === 'jobs' ? (
+        <PageContent padded={false}>
+          <JobsView />
+        </PageContent>
       ) : loaded && ordered.length === 0 ? (
         <EmptyState
           icon={<SquareTerminal />}

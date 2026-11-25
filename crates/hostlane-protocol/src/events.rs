@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    Approval, AuditEntry, Connection, ExecRecord, FileChange, OutputStream, PolicyStatus, Tunnel,
+    Approval, AuditEntry, Connection, ExecRecord, FileChange, Job, OutputStream, PolicyStatus,
+    Tunnel,
 };
 
 /// Pushed to `events.subscribe` connections as `{"method":"event","params":<Event>}`.
@@ -55,6 +56,10 @@ pub enum Event {
     /// The emergency stop was switched, or the number of pending approvals changed.
     Policy {
         status: PolicyStatus,
+    },
+    /// A background job started, finished, was cancelled, or its output grew.
+    Job {
+        job: Job,
     },
     /// This subscriber fell behind and missed events; reload state with the list methods.
     Lagged {

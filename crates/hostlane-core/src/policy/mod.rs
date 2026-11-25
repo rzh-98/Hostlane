@@ -3,8 +3,8 @@
 //! its handler runs.
 //!
 //! The policy guards against mistakes, not against a hostile local process: callers
-//! name themselves, and anything running as the same OS user could reach the SSH keys
-//! directly.
+//! name themselves unless they carry a client token (see `clients.rs`), and anything
+//! running as the same OS user could reach the SSH keys directly.
 
 mod approvals;
 mod classify;
@@ -528,6 +528,29 @@ async fn describe(daemon: &Daemon, name: &str, params: &Value) -> Described {
                     summary = name.to_string();
                 }
             }
+        }
+        method::JOBS_START => {
+            let line = str_param(params, "command").unwrap_or_default();
+            cwd = str_param(params, "cwd").map(str::to_owned);
+            assessment = classify::command(line, cwd.as_deref(), None);
+            command = Some(line.to_string());
+            summary = format!("background job: {}", truncate(line.trim(), SUMMARY_CHARS));
+        }
+        method::JOBS_LOGS | method::JOBS_CANCEL => {
+            let id = str_param(params, "id").unwrap_or_default();
+            let verb = if name == method::JOBS_CANCEL {
+                assessment.raise(Risk::L1, "stops a background job");
+                "cancel"
+            } else {
+                "read the output of"
+            };
+            summary = match daemon.jobs.host_of(id).await {
+                Some((job_host, job_command)) => {
+                    host = Some(job_host);
+                    format!("{verb} job {id}: {}", truncate(&job_command, SUMMARY_CHARS))
+                }
+                None => format!("{verb} job {id}"),
+            };
         }
         method::HOSTS_TRUST => {
             let fingerprint = str_param(params, "fingerprint").unwrap_or_default();

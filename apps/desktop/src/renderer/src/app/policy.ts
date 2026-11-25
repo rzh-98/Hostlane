@@ -78,9 +78,10 @@ export async function loadPolicy(): Promise<void> {
 export async function emergencyStop(reason?: string): Promise<HostlaneReply<PolicyStopped>> {
   const reply = await callHostlane<PolicyStopped>('policy.stop', { reason })
   if (reply.ok) {
-    const { status, closed_tunnels, denied_approvals } = reply.result
+    const { status, closed_tunnels, denied_approvals, cancelled_jobs } = reply.result
     const done = [
       closed_tunnels.length > 0 ? `关闭了 ${closed_tunnels.length} 条 agent 隧道` : null,
+      cancelled_jobs.length > 0 ? `取消了 ${cancelled_jobs.length} 个后台任务` : null,
       denied_approvals.length > 0 ? `拒绝了 ${denied_approvals.length} 个待审批` : null
     ].filter(Boolean)
     policyStore.set({
