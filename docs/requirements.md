@@ -26,6 +26,7 @@ Hostlane 只提供“手脚”：连接、执行、读写文件、端口映射�
 | 守护进程语言 | Rust（`tokio` + `russh` + `rmcp` + `rusqlite`），重点考虑性能和常驻时的资源占用 |
 | 运行方式 | 守护进程 `hostlane daemon` 常驻并注册为用户级服务；Electron 可以完全退出 |
 | 桌面端 | 基于 Desktop-Starter（Electron + React + Tailwind + Radix） |
+| 人的操作入口 | 主机与凭据、agent 接入、审批、监视、审计导出和回滚必须有图形界面；手工运行 CLI 或编辑 shell 配置不是使用桌面端的前置条件。CLI/MCP 继续作为 agent 的入口 |
 | 端口管理范围 | 支持 systemd、Docker 和 docker-compose；不支持 Kubernetes |
 | 终端 | 只读会话监视器，实时显示和回放 agent 执行的命令与输出；不支持人工输入或接管 |
 
@@ -170,8 +171,8 @@ agent 侧对应的工具包括：`ports_list`、`port_inspect`、`port_check`、
 | 隧道 | `#/tunnels` | 隧道列表、状态和流量；新建和编辑隧道 |
 | 会话 | `#/sessions` | 只读监视 agent 执行的命令和输出 |
 | 审批 | `#/approvals` | 待审批队列和审批历史；侧栏显示待处理数量 |
-| 审计 | `#/audit` | 调用记录、筛选条件和详情 |
-| 接入 | `#/integrations` | MCP 配置片段、CLI 安装和客户端令牌 |
+| 审计 | `#/audit` | 调用记录、筛选、导出、任务回滚预览和确认 |
+| 接入 | `#/integrations` | 一键写入客户端 MCP 配置、可选的 CLI 安装和客户端令牌 |
 | 设置 | `#/settings` | 外观、守护进程、通知和备份目录 |
 
 ## 6. 非功能需求

@@ -74,7 +74,9 @@ Electron 主进程 ◄─IPC─ 渲染进程（沙箱）────────
   2. 私钥文件。加密的私钥用钥匙串中保存的口令解开；没有保存口令时跳过。
   3. 已保存的登录密码：先试 `password`，再试 `keyboard-interactive`（每个提示都回答这个密码）。
 - 全部失败时返回 `AUTH_FAILED`，`details`（`AuthFailure`）列出服务器还接受的认证方式、缺少口令的密钥、试过的密钥数量和是否保存了密码，`hint` 给出对应的 `hostlane secret set` 命令。
-- 密码和口令保存在系统钥匙串中（macOS 钥匙串、Linux Secret Service、Windows 凭据管理器），服务名为 `Hostlane`，账户名为 `password/<主机>` 或 `passphrase/<密钥的绝对路径>`。SQLite 的 `secrets` 表只记录凭据清单和保存时间。请在本机终端用 `hostlane secret set` 的隐藏提示录入。渲染进程仅显示操作指引和清单，IPC 不允许它调用 `secrets.set`。审计只记录 `<redacted>`。`HOSTLANE_SECRET_STORE=file` 使用明文文件，仅供隔离测试使用。
+- 密码和口令保存在系统钥匙串中（macOS 钥匙串、Linux Secret Service、Windows 凭据管理器），SQLite 的 `secrets` 表只记录清单。主机页请求主进程打开系统掩码输入框（macOS 系统对话框、Windows PasswordBox、Linux Zenity/KDialog）；主进程通过本地 RPC 交给守护进程，页面只收到保存结果。取消不写入，渲染进程不能直接调用 `secrets.set`。CLI 的隐藏提示仍可用。审计只记录 `<redacted>`。`HOSTLANE_SECRET_STORE=file` 使用明文文件，仅供隔离测试使用。
+
+- 接入页在系统确认后合并当前用户的 MCP 配置，传入内置程序的完整路径，无须从 shell 启动。可选客户端令牌只通过子进程 stdin 传递；它会保存在所选客户端的配置内。审计导出使用系统保存窗口和同目录临时文件，成功后才替换目标；批量回滚只执行用户预览的修改 ID，逐项由守护进程校验。
 - `hostlane daemon start` 会以独立进程组在后台启动 `hostlane daemon run`，日志写入 `<数据目录>/daemon.log`，等到 socket 能响应后才返回。
 - 桌面端启动时，如果守护进程没有运行，会调用 `hostlane daemon start`。关闭桌面端不会停止守护进程。
 - `hostlane daemon install` 把守护进程注册为用户级服务：macOS 写入 `~/Library/LaunchAgents/com.hostlane.daemon.plist` 并 `launchctl bootstrap`（`RunAtLoad`，`KeepAlive` 只在非 0 退出时重启）；Linux 写入 `~/.config/systemd/user/hostlane.service` 并 `enable` + `restart`（`Restart=on-failure`）。服务文件记录当前二进制的绝对路径和当时设置的 `HOSTLANE_SOCKET`、`HOSTLANE_DATA_DIR`、`HOSTLANE_SSH_CONFIG`、`HOSTLANE_NOTIFY`。正在运行的守护进程会先被停止，再由服务接管。`--print` 只输出服务文件。

@@ -28,6 +28,7 @@ import type { AuditList } from '@shared/protocol/AuditList'
 import type { AuditListParams } from '@shared/protocol/AuditListParams'
 import type { HostsList } from '@shared/protocol/HostsList'
 import type { Risk } from '@shared/protocol/Risk'
+import { TaskRollback } from './TaskRollback'
 
 const PAGE_SIZE = 100
 const ANY = '*'
@@ -152,19 +153,38 @@ export function AuditPage() {
   const [viewing, setViewing] = useState<AuditEntry | null>(null)
   const [diffing, setDiffing] = useState<string | null>(null)
   const request = useRef(0)
+  const [exporting, setExporting] = useState(false)
+  const [exportFormat, setExportFormat] = useState<'csv' | 'jsonl'>('jsonl')
+  const [exported, setExported] = useState('')
+  const scope = useCallback(
+    (): AuditListParams => ({
+      host: host === ANY ? undefined : host,
+      client: client === ANY ? undefined : client,
+      [groupBy === 'task' ? 'task' : 'session']: group.trim() || undefined,
+      since: range === ANY ? undefined : Date.now() - ranges[range].ms,
+      min_risk: minRisk === ANY ? undefined : (minRisk as Risk)
+    }),
+    [host, client, groupBy, group, range, minRisk]
+  )
+  const save = async () => {
+    if (!window.desktop || exporting) return
+    setExporting(true)
+    setExported('')
+    try {
+      const result = await window.desktop.hostlane.exportAudit(exportFormat, scope())
+      if (!result.ok) setError(result.error)
+      else if (result.result) setExported(`已导出到 ${result.result}`)
+    } catch {
+      setError({ kind: 'IO', message: '导出失败。' })
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const load = useCallback(
     async (before?: number) => {
       const id = ++request.current
-      const params: AuditListParams = { limit: PAGE_SIZE, before_id: before }
-      if (host !== ANY) params.host = host
-      if (client !== ANY) params.client = client
-      if (group.trim()) {
-        if (groupBy === 'task') params.task = group.trim()
-        else params.session = group.trim()
-      }
-      if (range !== ANY) params.since = Date.now() - ranges[range].ms
-      if (minRisk !== ANY) params.min_risk = minRisk as Risk
+      const params: AuditListParams = { ...scope(), limit: PAGE_SIZE, before_id: before }
       setLoading(true)
       const reply = await callHostlane<AuditList>('audit.list', params)
       if (id !== request.current) return
@@ -185,7 +205,7 @@ export function AuditPage() {
         return names.size === previous.length ? previous : [...names].sort()
       })
     },
-    [host, client, range, minRisk, group, groupBy]
+    [scope]
   )
 
   useEffect(() => {
@@ -270,7 +290,7 @@ export function AuditPage() {
           onClick={() => void load()}
         />
       </Toolbar>
-      <div className="flex items-center gap-2 border-b border-border px-page py-1">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-page py-1">
         <Select
           aria-label="时间线分组"
           value={groupBy}
@@ -293,7 +313,32 @@ export function AuditPage() {
             查看此组
           </Button>
         )}
+        {online && groupBy === 'task' && group.trim() && range === ANY && minRisk === ANY && (
+          <TaskRollback
+            key={JSON.stringify([group.trim(), host, client])}
+            task={group.trim()}
+            host={host === ANY ? undefined : host}
+            client={client === ANY ? undefined : client}
+          />
+        )}
+        <Select
+          aria-label="导出格式"
+          value={exportFormat}
+          onValueChange={(value) => setExportFormat(value === 'csv' ? 'csv' : 'jsonl')}
+          options={[
+            { value: 'jsonl', label: 'JSONL' },
+            { value: 'csv', label: 'CSV' }
+          ]}
+        />
+        <Button disabled={!online || !window.desktop || exporting} onClick={() => void save()}>
+          {exporting ? '导出中…' : '导出筛选结果…'}
+        </Button>
       </div>
+      {exported && (
+        <Notice tone="success" onDismiss={() => setExported('')}>
+          {exported}
+        </Notice>
+      )}
 
       {online && error && (
         <Notice tone="danger" icon={<TriangleAlert />} onDismiss={() => setError(null)}>

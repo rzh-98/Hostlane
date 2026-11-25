@@ -11,6 +11,10 @@ const api: DesktopApi = {
   setThemeSource: (source) => ipcRenderer.invoke(IpcChannel.setThemeSource, source),
   setTitleBarHeight: (height) => ipcRenderer.invoke(IpcChannel.setTitleBarHeight, height),
   hostlane: {
+    promptSecret: (host, kind, key) => ipcRenderer.invoke(IpcChannel.promptSecret, host, kind, key),
+    chooseKey: () => ipcRenderer.invoke(IpcChannel.chooseKey),
+    revealTrustRecord: (host) => ipcRenderer.invoke(IpcChannel.revealTrustRecord, host),
+    exportAudit: (format, scope) => ipcRenderer.invoke(IpcChannel.exportAudit, format, scope),
     call: (method, params) => ipcRenderer.invoke(IpcChannel.hostlaneCall, method, params),
     startDaemon: () => ipcRenderer.invoke(IpcChannel.hostlaneStartDaemon),
     onEvent: (listener) => {
@@ -22,6 +26,7 @@ const api: DesktopApi = {
     }
   },
   setup: {
+    configureMcp: (client, token) => ipcRenderer.invoke(IpcChannel.configureMcp, client, token),
     status: () => ipcRenderer.invoke(IpcChannel.setupStatus),
     linkCli: () => ipcRenderer.invoke(IpcChannel.setupLinkCli),
     installService: () => ipcRenderer.invoke(IpcChannel.setupInstallService),

@@ -11,6 +11,11 @@ export const IpcChannel = {
   navigate: 'app:navigate',
   setupStatus: 'setup:status',
   setupLinkCli: 'setup:link-cli',
+  promptSecret: 'hostlane:prompt-secret',
+  chooseKey: 'hostlane:choose-key',
+  revealTrustRecord: 'hostlane:reveal-trust-record',
+  configureMcp: 'setup:configure-mcp',
+  exportAudit: 'hostlane:export-audit',
   setupInstallService: 'setup:install-service',
   setupUninstallService: 'setup:uninstall-service'
 } as const
@@ -33,6 +38,7 @@ export const RENDERER_METHODS = [
   'exec.list',
   'output.read',
   'files.change',
+  'files.rollback_plan',
   'files.revert',
   'ports.list',
   'ports.inspect',
@@ -150,6 +156,17 @@ export interface DesktopApi {
   /** Keeps macOS traffic lights vertically centred in the toolbar. */
   setTitleBarHeight: (height: number) => Promise<void>
   hostlane: {
+    promptSecret: (
+      host: string,
+      kind: 'password' | 'passphrase',
+      key?: string
+    ) => Promise<HostlaneReply<boolean>>
+    chooseKey: () => Promise<string | null>
+    revealTrustRecord: (host: string) => Promise<boolean>
+    exportAudit: (
+      format: 'jsonl' | 'csv',
+      scope: import('./protocol/AuditListParams').AuditListParams
+    ) => Promise<HostlaneReply<string | null>>
     call: <T>(method: RendererMethod, params?: unknown) => Promise<HostlaneReply<T>>
     /** Starts the background daemon if needed (`hostlane daemon start`). */
     startDaemon: () => Promise<HostlaneReply<null>>
@@ -157,6 +174,10 @@ export interface DesktopApi {
     onEvent: (listener: (event: HostlaneEvent) => void) => () => void
   }
   setup: {
+    configureMcp: (
+      client: 'codex' | 'claude' | 'cursor',
+      token?: string
+    ) => Promise<HostlaneReply<string | null>>
     status: () => Promise<SetupStatus>
     /** Links `~/.local/bin/hostlane` to this app's binary. */
     linkCli: () => Promise<HostlaneReply<SetupStatus>>

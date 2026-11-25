@@ -18,6 +18,7 @@ use hostlane_protocol::{
 use serde_json::{Value, json};
 
 mod clients;
+mod desktop_setup;
 mod files;
 mod jobs;
 mod journal;
@@ -170,6 +171,12 @@ enum Command {
     /// Add it to your agent's MCP settings as the command `hostlane mcp`. Starts the
     /// daemon if it is not running.
     Mcp,
+    #[command(hide = true)]
+    ConfigureMcp {
+        #[arg(value_enum)]
+        client: desktop_setup::Target,
+        file: PathBuf,
+    },
     /// Manage the background daemon.
     #[command(subcommand)]
     Daemon(DaemonCommand),
@@ -357,6 +364,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             print_json(&client.call(&method, params).await?);
         }
         Command::Mcp => mcp::serve(socket, cli.socket).await?,
+        Command::ConfigureMcp { client, file } => desktop_setup::configure(client, &file)?,
         Command::Daemon(DaemonCommand::Run {
             data_dir,
             ssh_config,

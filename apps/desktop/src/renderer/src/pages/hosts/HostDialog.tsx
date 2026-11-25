@@ -139,11 +139,23 @@ export function HostDialog({
               label="密钥文件"
               description="填写后只使用这个密钥；留空则使用 ssh-agent 和默认密钥"
             >
-              <Input
-                placeholder="~/.ssh/id_ed25519"
-                value={key}
-                onChange={(e) => setKey(e.target.value)}
-              />
+              <div className="flex items-center gap-2">
+                <Input
+                  placeholder="~/.ssh/id_ed25519"
+                  value={key}
+                  onChange={(e) => setKey(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  disabled={!window.desktop}
+                  onClick={async () => {
+                    const path = await window.desktop?.hostlane.chooseKey()
+                    if (path) setKey(path)
+                  }}
+                >
+                  浏览…
+                </Button>
+              </div>
             </Field>
             <div className="grid grid-cols-[8rem_1fr] gap-3">
               <Field label="环境">

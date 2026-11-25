@@ -17,6 +17,10 @@ pub struct Scope {
     client: Option<String>,
     #[arg(long)]
     host: Option<String>,
+    #[arg(long)]
+    since: Option<u64>,
+    #[arg(long, value_enum)]
+    min_risk: Option<crate::policy::RiskArg>,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -65,6 +69,8 @@ impl Scope {
             session: self.session.clone(),
             host: self.host.clone(),
             client: self.client.clone(),
+            since: self.since,
+            min_risk: self.min_risk.map(Into::into),
             before_id,
             limit: Some(250),
             ..Default::default()

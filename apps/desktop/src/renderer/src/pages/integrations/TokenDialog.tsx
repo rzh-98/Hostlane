@@ -16,6 +16,7 @@ import {
 } from '@/ui'
 import type { ClientCreated } from '@shared/protocol/ClientCreated'
 import { mcpSnippet, type McpClient } from './snippets'
+import { ConfigureMcp } from './ConfigureMcp'
 
 interface TokenDialogProps {
   open: boolean
@@ -68,7 +69,7 @@ export function TokenDialog({ open, command, env, onOpenChange, onCreate }: Toke
           <DialogTitle>{created ? `${created.client.name} 的令牌` : '新建客户端令牌'}</DialogTitle>
           <DialogDescription>
             {created
-              ? '令牌只显示这一次，Hostlane 只保存它的哈希。关闭前复制到 agent 的配置中。'
+              ? '令牌只显示这一次。选择客户端并写入配置，无需在终端中传递令牌。'
               : '名称会出现在审计和会话页中，例如 claude-code。'}
           </DialogDescription>
         </DialogHeader>
@@ -96,9 +97,13 @@ export function TokenDialog({ open, command, env, onOpenChange, onCreate }: Toke
                       <span className="flex-1" />
                       <CopyButton text={snippet} />
                     </div>
-                    <pre className="selectable overflow-x-auto rounded-md border border-border bg-bg-subtle p-3 font-mono text-sm text-fg-muted">
-                      {snippet}
-                    </pre>
+                    <ConfigureMcp key={target} client={target} token={created.token} />
+                    <details>
+                      <summary>手动配置（可选）</summary>
+                      <pre className="selectable overflow-x-auto rounded-md border border-border bg-bg-subtle p-3 font-mono text-sm text-fg-muted">
+                        {snippet}
+                      </pre>
+                    </details>
                   </div>
                 </Field>
               )}

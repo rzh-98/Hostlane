@@ -4,6 +4,7 @@ import { refreshSetup, runSetup, useSetup } from '@/app/setup'
 import { Page, PageContent, Toolbar } from '@/layout'
 import { Badge, Button, FormRow, IconButton, Notice, Section, SegmentedControl } from '@/ui'
 import { ClientsSection } from './ClientsSection'
+import { ConfigureMcp } from './ConfigureMcp'
 import { mcpSnippet, type McpClient } from './snippets'
 
 const cliCommands: [command: string, description: string][] = [
@@ -56,8 +57,6 @@ const mcpClients: { value: McpClient; label: string }[] = [
   { value: 'claude', label: 'Claude Code' },
   { value: 'cursor', label: 'Cursor' }
 ]
-
-const pathExport = 'export PATH="$HOME/.local/bin:$PATH"'
 
 interface PageNotice {
   tone: 'success' | 'danger'
@@ -133,10 +132,14 @@ export function IntegrationsPage() {
             />
             {snippet ? (
               <>
-                <span className="text-sm text-fg-muted">{snippet.where}</span>
-                <pre className="selectable overflow-x-auto rounded-md border border-border bg-bg-subtle p-3 font-mono text-sm text-fg-muted">
-                  {snippet.text}
-                </pre>
+                {status?.binaryExists && <ConfigureMcp key={client} client={client} />}
+                <details>
+                  <summary>手动配置（可选）</summary>
+                  <span className="text-sm text-fg-muted">{snippet.where}</span>
+                  <pre className="selectable overflow-x-auto rounded-md border border-border bg-bg-subtle p-3 font-mono text-sm text-fg-muted">
+                    {snippet.text}
+                  </pre>
+                </details>
                 {status && !status.binaryExists && (
                   <span className="text-sm text-danger-text">
                     找不到 {status.binary}，开发时先在仓库根目录运行 cargo build。
@@ -150,7 +153,7 @@ export function IntegrationsPage() {
         </Section>
 
         <Section
-          title="命令行"
+          title="命令行（可选）"
           description={
             window.desktop?.platform === 'win32'
               ? '将 hostlane.exe 所在目录加入当前用户的 PATH，不修改系统 PATH。'
@@ -181,12 +184,11 @@ export function IntegrationsPage() {
           )}
           {cli?.linked && !cli.dirOnPath && (
             <FormRow
-              label="加入 PATH"
-              description="~/.local/bin 不在 shell 的 PATH 中，把这行加到 ~/.zshrc 或 ~/.bashrc。"
+              label="桌面端和 MCP 不依赖 PATH"
+              description="当前 shell 不含链接目录。MCP 使用完整路径，无需修改 shell 配置。"
             >
               <span className="flex items-center gap-2">
-                <code className="selectable font-mono text-sm text-fg">{pathExport}</code>
-                <CopyButton text={pathExport} />
+                <code className="selectable font-mono text-sm text-fg">{cli.linkPath}</code>
               </span>
             </FormRow>
           )}

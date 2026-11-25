@@ -94,12 +94,17 @@ function secretsOf(host: Host, secrets: SavedSecret[]): SavedSecret[] {
 
 /** Plain-language explanation of a failed connection. */
 function problemText(host: string, error: RpcError): { text: string; hint?: string } {
+  if (error.data.kind === 'AUTH_FAILED')
+    return {
+      text: `${host} 的 SSH 身份验证失败。`,
+      hint: '检查用户名和私钥，或在此保存服务器支持的密码或密钥口令，再点击连接。'
+    }
   if (error.data.kind === 'HOST_KEY_CHANGED') {
     const recordedAt = (error.data.details as Partial<HostKeyInfo> | undefined)?.recorded_at
     return {
       text: `${host} 的主机密钥与记录不一致，可能有人在拦截连接，Hostlane 已拒绝连接。`,
       hint: recordedAt
-        ? `如果确认服务器更换过密钥，删除 ${recordedAt} 中的旧记录后再连接`
+        ? `记录位置：${recordedAt}。请与管理员独立核对新指纹；不要移除吊销标记或直接信任新密钥。`
         : undefined
     }
   }
@@ -160,6 +165,8 @@ export function HostsPage() {
     }
     const hostKey = hostKeyFrom(reply.error)
     if (hostKey) setPendingTrust(hostKey)
+    else if (reply.error.kind === 'AUTH_FAILED' || reply.error.kind === 'HOST_KEY_CHANGED')
+      void loadConnections()
     else setFeedback({ tone: 'danger', text: reply.error.message, hint: reply.error.hint })
   }
 
@@ -268,7 +275,7 @@ export function HostsPage() {
   }
 
   const askSecret = (host: Host, kind: SecretTarget['kind']) => {
-    setSecretTarget({ host: host.id, kind })
+    setSecretTarget({ host: host.id, kind, keys: host.identity_files })
   }
 
   const visible = useMemo(() => {
@@ -346,6 +353,19 @@ export function HostsPage() {
             unknownKey ? (
               <Button size="sm" onClick={() => setPendingTrust(unknownKey)}>
                 核对指纹…
+              </Button>
+            ) : problem.data.kind === 'HOST_KEY_CHANGED' && selected ? (
+              <Button
+                size="sm"
+                onClick={async () => {
+                  if (!(await window.desktop?.hostlane.revealTrustRecord(selected.id)))
+                    setFeedback({
+                      tone: 'danger',
+                      text: '无法定位本机记录，请联系管理员核对主机指纹。'
+                    })
+                }}
+              >
+                定位信任记录…
               </Button>
             ) : (
               authFailure &&
@@ -463,7 +483,13 @@ export function HostsPage() {
         onSubmit={(params) => void saveHost(params)}
       />
       <SecretDialog
+        key={`${secretTarget?.host}:${secretTarget?.kind}`}
         target={secretTarget}
+        onSaved={() => {
+          setSecretTarget(null)
+          setFeedback({ tone: 'success', text: '凭据已保存到系统钥匙串。' })
+          void load()
+        }}
         onClose={() => {
           setSecretTarget(null)
           void load()

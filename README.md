@@ -74,7 +74,9 @@ Details: [architecture and protocol](docs/architecture.md) (Chinese).
 
 ## Quick start
 
-There are no prebuilt releases yet; build from source.
+With a desktop build, no terminal is needed: open **Hosts → Add host**, browse for a private key or save a password using the system dialog, then connect and check the fingerprint. Under **Integrations → MCP**, select your client and write its configuration. Restart the client; no PATH edits are needed. In **Audit**, export filtered records or select a task timeline to preview a rollback. The session monitor stays read-only.
+
+There are no signed releases yet. The commands below are for building from source.
 
 **Requirements:** Rust 1.89+, Node.js 22.12+ and npm 10+.
 
@@ -401,7 +403,7 @@ No, by design. The session monitor is read-only so that everything that happens 
 <details>
 <summary>Can I log in with a password, or with a key that has a passphrase?</summary>
 
-Yes. Run `hostlane secret set <host> --password` (or `--passphrase`) in a local terminal. The hidden prompt keeps credentials out of the desktop renderer. The host page shows the command and lets you check or remove saved entries. On Linux, the system keychain requires a Secret Service provider.
+Yes. On the Hosts page, choose **Save password** or **Save key passphrase**. The system password dialog keeps credentials out of the desktop renderer. Linux needs a Secret Service provider and either Zenity or KDialog. The CLI hidden prompt is still available.
 
 </details>
 

@@ -150,6 +150,7 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           npm ci
           npm run build
+          npx electron scripts/gui-flow.cjs
           New-Item -ItemType Directory -Force ../../target/release | Out-Null
           Copy-Item ../../target/debug/hostlane.exe ../../target/release/hostlane.exe -Force
           npx electron-builder --win --dir --publish never
