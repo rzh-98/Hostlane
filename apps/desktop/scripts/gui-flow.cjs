@@ -41,6 +41,12 @@ childProcess.execFile = (program, args, options, callback) => {
     return exec(program, args, options, callback)
   assert.ok(options.env.HOSTLANE_DIALOG_LABEL.includes('fixture'))
   assert.ok(!args.join(' ').includes(fixture))
+  if (process.platform === 'darwin') {
+    assert.equal(args.at(-1), options.env.HOSTLANE_DIALOG_LABEL)
+    assert.ok(args[args.indexOf('-e') + 1].includes('on run argv'))
+    assert.ok(args[args.indexOf('-e') + 1].includes('item 1 of argv'))
+    assert.ok(!args[args.indexOf('-e') + 1].includes('system attribute'))
+  }
   if (process.platform === 'win32' && process.env.GITHUB_ACTIONS === 'true') {
     const original = Buffer.from(args.at(-1), 'base64').toString('utf16le')
     const marker = 'if ($w.ShowDialog() -eq $true)'

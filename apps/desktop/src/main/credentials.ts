@@ -5,13 +5,15 @@ import type { HostlaneReply } from '../shared/ipc'
 import type { HostsList } from '../shared/protocol/HostsList'
 import { callDaemon } from './daemon'
 
-const macPrompt = `try
+const macPrompt = `on run argv
+try
   activate
-  set answer to display dialog (system attribute "HOSTLANE_DIALOG_LABEL") with title "Hostlane · SSH" default answer "" with hidden answer buttons {"取消", "保存"} default button "保存" cancel button "取消"
+  set answer to display dialog (item 1 of argv) with title "Hostlane · SSH" default answer "" with hidden answer buttons {"取消", "保存"} default button "保存" cancel button "取消"
   return text returned of answer
 on error number -128
   return ""
-end try`
+end try
+end run`
 
 const windowsPrompt = `$ErrorActionPreference='Stop'; Add-Type -AssemblyName PresentationFramework; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $w=New-Object Windows.Window; $w.Title='Hostlane · SSH'; $w.SizeToContent='WidthAndHeight'; $w.WindowStartupLocation='CenterScreen'; $w.ResizeMode='NoResize'; $w.Topmost=$true
@@ -28,7 +30,7 @@ function input(label: string, signal: AbortSignal): Promise<Buffer | null> {
   let cancelCode: number | undefined
   if (process.platform === 'darwin') {
     program = '/usr/bin/osascript'
-    args = ['-e', macPrompt]
+    args = ['-e', macPrompt, label]
   } else if (process.platform === 'win32') {
     program = join(
       process.env.SystemRoot ?? 'C:\\Windows',
