@@ -144,7 +144,7 @@ fn cancel_script(id: &str) -> String {
 pid=$(cat "$D/pid" 2>/dev/null)
 pg=$(cat "$D/pgid" 2>/dev/null)
 sig() {{
-  if [ -n "$pg" ] && [ "$pg" -gt 1 ] 2>/dev/null && kill -$1 -- "-$pg" 2>/dev/null; then return 0; fi
+  if [ -n "$pg" ] && [ "$pg" -gt 1 ] 2>/dev/null && kill -$1 "-$pg" 2>/dev/null; then return 0; fi
   [ -n "$pid" ] && kill -$1 "$pid" 2>/dev/null
 }}
 sig TERM
@@ -618,5 +618,60 @@ mod tests {
         assert!(!nohup.contains("tmux"));
         assert!(check_id("jb-1; rm").is_err());
         assert!(logs_script("jb-1", Some(10), 100, 50).contains("tail -c +11"));
+    }
+
+    /// Starts a nohup job and cancels it with each local POSIX shell (dash's `kill`
+    /// rejects `--`), then checks that no process of the job is left.
+    #[cfg(unix)]
+    #[test]
+    fn cancel_stops_the_whole_process_group() {
+        use std::os::unix::process::CommandExt;
+        use std::process::Command;
+        for (n, shell) in ["/bin/sh", "/bin/dash"].into_iter().enumerate() {
+            if !std::path::Path::new(shell).exists() {
+                continue;
+            }
+            let home = std::env::temp_dir().join(format!("hl-job-{}-{n}", std::process::id()));
+            std::fs::create_dir_all(&home).unwrap();
+            let marker = format!("sleep 30{}{n}", std::process::id() % 1000);
+            let run = |script: String| {
+                let out = Command::new(shell)
+                    .arg("-c")
+                    .arg(script)
+                    .env("HOME", &home)
+                    .env("SHELL", shell)
+                    .process_group(0)
+                    .output()
+                    .unwrap();
+                String::from_utf8_lossy(&out.stdout).into_owned()
+            };
+            let left = || {
+                let ps = Command::new("ps").args(["-eo", "args="]).output().unwrap();
+                String::from_utf8_lossy(&ps.stdout)
+                    .lines()
+                    .filter(|line| line.trim() == marker)
+                    .count()
+            };
+            let id = format!("jb-test-{n}");
+            let started = run(start_script(
+                &id,
+                &format!("{marker} & {marker}"),
+                Some(JobBackend::Nohup),
+            ));
+            assert!(started.contains("backend=nohup"), "{shell}: {started}");
+            for _ in 0..30 {
+                if left() == 2 {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            assert_eq!(left(), 2, "{shell}: job did not start");
+            let cancelled = run(cancel_script(&id));
+            assert!(cancelled.contains("result="), "{shell}: {cancelled}");
+            std::thread::sleep(Duration::from_millis(300));
+            let remaining = left();
+            std::fs::remove_dir_all(&home).unwrap();
+            assert_eq!(remaining, 0, "{shell}: processes left after cancel");
+        }
     }
 }
