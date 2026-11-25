@@ -94,10 +94,8 @@ jobs:
         run: npx electron-vite build
 
   windows:
-    # Windows is not supported yet (milestone M12); this only tracks whether it compiles.
-    name: Windows (build check)
+    name: Windows (native runtime)
     runs-on: windows-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
 
@@ -107,3 +105,28 @@ jobs:
 
       - name: Check
         run: cargo check --workspace --all-targets
+
+      - name: Build CLI and test the per-user runtime
+        shell: pwsh
+        run: |
+          cargo build -p hostlane-cli
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./scripts/windows-smoke.ps1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Smoke test the Windows desktop bundle
+        working-directory: apps/desktop
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          npm ci
+          npm run build
+          New-Item -ItemType Directory -Force ../../target/release | Out-Null
+          Copy-Item ../../target/debug/hostlane.exe ../../target/release/hostlane.exe -Force
+          npx electron-builder --win --dir --publish never
+          node scripts/smoke.mjs

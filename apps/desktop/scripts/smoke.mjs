@@ -12,6 +12,13 @@ const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
 const releaseDir = join('release', pkg.version)
 
 function findApp() {
+  if (process.platform === 'win32') {
+    const dir = join(releaseDir, 'win-unpacked')
+    return {
+      executable: join(dir, `${pkg.productName}.exe`),
+      hostlane: join(dir, 'resources', 'bin', 'hostlane.exe')
+    }
+  }
   if (process.platform === 'darwin') {
     const macDir = readdirSync(releaseDir).find((dir) => dir.startsWith('mac'))
     const bundle = join(releaseDir, macDir, `${pkg.productName}.app`, 'Contents')
@@ -81,7 +88,10 @@ const work = mkdtempSync(join(tmpdir(), 'hostlane-smoke-'))
 writeFileSync(join(work, 'ssh_config'), 'Host demo\n  HostName 192.0.2.10\n  User deploy\n')
 const env = {
   ...process.env,
-  HOSTLANE_SOCKET: join(work, 'hl.sock'),
+  HOSTLANE_SOCKET:
+    process.platform === 'win32'
+      ? `\\\\.\\pipe\\hostlane-smoke-${process.pid}`
+      : join(work, 'hl.sock'),
   HOSTLANE_DATA_DIR: join(work, 'data'),
   HOSTLANE_SSH_CONFIG: join(work, 'ssh_config'),
   HOSTLANE_NOTIFY: '0'

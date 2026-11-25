@@ -7,6 +7,8 @@ pub mod paths;
 pub mod secrets;
 pub mod server;
 pub mod ssh_config;
+#[cfg(windows)]
+pub mod windows_pipe;
 
 mod catalog;
 mod clients;

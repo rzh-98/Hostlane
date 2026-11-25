@@ -28,6 +28,7 @@ const ENV_VARS: &[&str] = &[
 pub enum Manager {
     Launchd,
     Systemd,
+    Scheduler,
 }
 
 impl Manager {
@@ -36,6 +37,8 @@ impl Manager {
             Some(Self::Launchd)
         } else if cfg!(target_os = "linux") {
             Some(Self::Systemd)
+        } else if cfg!(windows) {
+            Some(Self::Scheduler)
         } else {
             None
         }
@@ -44,6 +47,7 @@ impl Manager {
     fn file(self) -> PathBuf {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
         match self {
+            Self::Scheduler => paths::data_dir().join("login-task.xml"),
             Self::Launchd => home
                 .join("Library/LaunchAgents")
                 .join(format!("{LABEL}.plist")),
@@ -76,8 +80,9 @@ pub struct Definition {
 
 impl Definition {
     pub fn current(socket: Option<&Path>) -> Result<Self> {
-        let binary = std::env::current_exe()
-            .context("cannot find the hostlane binary")?
+        let binary = std::env::current_exe().context("cannot find the hostlane binary")?;
+        #[cfg(not(windows))]
+        let binary = binary
             .canonicalize()
             .context("cannot resolve the hostlane binary")?;
         let mut args = vec!["daemon".to_string(), "run".to_string()];
@@ -107,6 +112,64 @@ fn xml(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+#[cfg(windows)]
+fn sid() -> Result<String> {
+    Ok(hostlane_core::windows_pipe::user_sid()?)
+}
+#[cfg(not(windows))]
+fn sid() -> Result<String> {
+    bail!("Task Scheduler requires Windows")
+}
+
+fn task_name() -> Result<String> {
+    Ok(format!("Hostlane-{}", sid()?))
+}
+
+fn task_xml_for(def: &Definition, user: &str) -> String {
+    let mut args = def.args.clone();
+    if !args.iter().any(|arg| arg == "--socket") {
+        args.extend([
+            "--socket".into(),
+            paths::socket_path().display().to_string(),
+        ]);
+    }
+    args.extend([
+        "--data-dir".into(),
+        paths::data_dir().display().to_string(),
+        "--ssh-config".into(),
+        paths::ssh_config_path().display().to_string(),
+    ]);
+    let arguments = args
+        .iter()
+        .map(|arg| {
+            format!(
+                "\"{}{}\"",
+                xml(arg),
+                "\\".repeat(arg.chars().rev().take_while(|ch| *ch == '\\').count())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Triggers><LogonTrigger><Enabled>true</Enabled><UserId>{user}</UserId></LogonTrigger></Triggers><Principals><Principal id="User"><UserId>{user}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals><Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><Hidden>true</Hidden><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure></Settings><Actions Context="User"><Exec><Command>{}</Command><Arguments>{arguments}</Arguments></Exec></Actions></Task>"#,
+        xml(&def.binary.display().to_string())
+    )
+}
+
+pub fn task_xml(def: &Definition) -> Result<String> {
+    Ok(task_xml_for(def, &sid()?))
+}
+
+fn scheduler() -> String {
+    std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+        .join("System32/schtasks.exe")
+        .display()
+        .to_string()
 }
 
 pub fn launchd_plist(def: &Definition) -> String {
@@ -197,6 +260,16 @@ pub fn systemd_unit(def: &Definition) -> String {
 /// The binary an installed service file runs, read back from the file.
 fn installed_binary(manager: Manager, content: &str) -> Option<String> {
     match manager {
+        Manager::Scheduler => Some(
+            content
+                .split_once("<Command>")?
+                .1
+                .split_once("</Command>")?
+                .0
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&"),
+        ),
         Manager::Launchd => {
             let after = content.split("<key>ProgramArguments</key>").nth(1)?;
             let start = after.find("<string>")? + "<string>".len();
@@ -236,11 +309,33 @@ pub fn status() -> ServiceStatus {
         };
     };
     let path = manager.file();
-    let content = std::fs::read_to_string(&path).ok();
+    let content = if manager == Manager::Scheduler {
+        std::fs::read(&path).ok().and_then(|bytes| {
+            let (words, tail) = bytes.strip_prefix(&[0xff, 0xfe])?.as_chunks::<2>();
+            if !tail.is_empty() {
+                return None;
+            }
+            String::from_utf16(
+                &words
+                    .iter()
+                    .copied()
+                    .map(u16::from_le_bytes)
+                    .collect::<Vec<_>>(),
+            )
+            .ok()
+        })
+    } else {
+        std::fs::read_to_string(&path).ok()
+    };
+    let installed = content.is_some()
+        && (manager != Manager::Scheduler
+            || task_name().ok().is_some_and(|task| {
+                run(&scheduler(), &["/Query", "/TN", &task]).is_ok_and(|out| out.status.success())
+            }));
     ServiceStatus {
         supported: true,
         manager: Some(manager),
-        installed: content.is_some(),
+        installed,
         binary: content.and_then(|c| installed_binary(manager, &c)),
         path: Some(path),
     }
@@ -312,6 +407,7 @@ pub async fn install(client: &Client, def: &Definition) -> Result<Installed> {
         std::fs::create_dir_all(dir)?;
     }
     let content = match manager {
+        Manager::Scheduler => task_xml(def)?,
         Manager::Launchd => launchd_plist(def),
         Manager::Systemd => systemd_unit(def),
     };
@@ -319,9 +415,32 @@ pub async fn install(client: &Client, def: &Definition) -> Result<Installed> {
         let domain = gui_domain()?;
         let _ = run("launchctl", &["bootout", &format!("{domain}/{LABEL}")]);
     }
-    std::fs::write(&path, content).with_context(|| format!("cannot write {}", path.display()))?;
+    let bytes = if manager == Manager::Scheduler {
+        std::iter::once(0xfeff)
+            .chain(content.encode_utf16())
+            .flat_map(u16::to_le_bytes)
+            .collect()
+    } else {
+        content.into_bytes()
+    };
+    std::fs::write(&path, bytes).with_context(|| format!("cannot write {}", path.display()))?;
     let restarted = stop_running(client).await?;
     match manager {
+        Manager::Scheduler => {
+            let name = task_name()?;
+            check(
+                &scheduler(),
+                &[
+                    "/Create",
+                    "/TN",
+                    &name,
+                    "/XML",
+                    &path.display().to_string(),
+                    "/F",
+                ],
+            )?;
+            check(&scheduler(), &["/Run", "/TN", &name])?;
+        }
         Manager::Launchd => {
             let domain = gui_domain()?;
             check(
@@ -356,6 +475,7 @@ pub fn start() -> Result<bool> {
         return Ok(false);
     }
     match manager {
+        Manager::Scheduler => check(&scheduler(), &["/Run", "/TN", &task_name()?])?,
         Manager::Launchd => {
             let target = format!("{}/{LABEL}", gui_domain()?);
             if check("launchctl", &["kickstart", &target]).is_err() {
@@ -384,6 +504,11 @@ pub fn uninstall() -> Result<bool> {
         return Ok(false);
     }
     match manager {
+        Manager::Scheduler => {
+            let name = task_name()?;
+            let _ = run(&scheduler(), &["/End", "/TN", &name]);
+            check(&scheduler(), &["/Delete", "/TN", &name, "/F"])?;
+        }
         Manager::Launchd => {
             let domain = gui_domain()?;
             let _ = run("launchctl", &["bootout", &format!("{domain}/{LABEL}")]);

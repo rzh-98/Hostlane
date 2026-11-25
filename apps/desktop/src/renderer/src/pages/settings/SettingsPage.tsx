@@ -33,7 +33,11 @@ function formatUptime(ms: number): string {
   return `${Math.floor(hours / 24)} 天 ${hours % 24} 小时`
 }
 
-const managerLabels = { launchd: 'launchd', systemd: 'systemd --user' } as const
+const managerLabels = {
+  launchd: 'launchd',
+  systemd: 'systemd --user',
+  scheduler: 'Windows 任务计划程序'
+} as const
 
 interface SettingsNotice {
   tone: 'success' | 'danger'

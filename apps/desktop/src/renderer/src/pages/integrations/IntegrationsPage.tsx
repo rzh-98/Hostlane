@@ -96,7 +96,13 @@ export function IntegrationsPage() {
     setNotice(
       error
         ? { tone: 'danger', text: `安装失败：${error.message}` }
-        : { tone: 'success', text: '已把 hostlane 安装到 ~/.local/bin。' }
+        : {
+            tone: 'success',
+            text:
+              window.desktop?.platform === 'win32'
+                ? '已加入用户 PATH。重新登录后，新终端会使用此路径。'
+                : '已把 hostlane 安装到 ~/.local/bin。'
+          }
     )
   }
 
@@ -145,7 +151,11 @@ export function IntegrationsPage() {
 
         <Section
           title="命令行"
-          description="把 hostlane 链接到 ~/.local/bin，终端和 agent 就能直接运行它；配置片段也会改用这个路径。"
+          description={
+            window.desktop?.platform === 'win32'
+              ? '将 hostlane.exe 所在目录加入当前用户的 PATH，不修改系统 PATH。'
+              : '把 hostlane 链接到 ~/.local/bin，终端和 agent 就能直接运行它；配置片段也会改用这个路径。'
+          }
           divided
         >
           <FormRow label="安装到 PATH" description={cli ? cli.linkPath : undefined}>

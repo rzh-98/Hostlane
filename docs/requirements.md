@@ -198,7 +198,7 @@ agent 侧对应的工具包括：`ports_list`、`port_inspect`、`port_check`、
 | **M9 长任务与接入**（已完成） | E2 后台任务（`tmux` / `nohup`，急停时一并取消）、A5 客户端名称和令牌（可要求所有 agent 带令牌）、S6 不可信数据标记 |
 | **M10 web 运维**（已完成） | P5 暴露面估计、P6 Nginx/Caddy 静态域名映射、P9 定时 HTTP(S) 健康检查、T2 临时回环远程转发、H6 主机画像、H7 主机备注导出 |
 | **M11 审计与回滚**（已完成） | F5 按任务预览和逐项回滚、L3 任务/会话时间线、L4 JSONL/CSV 导出、M3 按命令回放 |
-| **M12 Windows** | 命名管道和 ACL、Windows OpenSSH agent、任务计划程序开机启动、后台启动、PATH 设置 |
+| **M12 Windows**（已完成） | 用户专属命名管道和 ACL、Windows OpenSSH agent、任务计划程序登录启动、后台启动、用户 PATH 设置 |
 | **V1.0 发布** | 代码签名和公证、自动更新、Homebrew |
 
 M10 之后的顺序按实际使用中最常用的场景决定。

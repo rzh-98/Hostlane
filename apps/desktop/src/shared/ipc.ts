@@ -113,7 +113,7 @@ export type HostlaneEvent = Event | { type: 'subscribed' }
 /** `hostlane --json daemon service`. */
 export interface ServiceStatus {
   supported: boolean
-  manager: 'launchd' | 'systemd' | null
+  manager: 'launchd' | 'systemd' | 'scheduler' | null
   installed: boolean
   path: string | null
   /** The `hostlane` binary the installed service runs. */

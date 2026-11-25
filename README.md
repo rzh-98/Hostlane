@@ -23,7 +23,7 @@
 </div>
 
 > [!WARNING]
-> Hostlane is in early development. M0–M10 are available, including [web operations](#web-operations). There are no signed releases yet. See the [roadmap](#roadmap).
+> Hostlane is in early development. Features include [web operations](#web-operations), task rollback and a Windows runtime. There are no signed releases yet. See the [roadmap](#roadmap).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -179,6 +179,14 @@ hostlane web forwards
 
 Health checks use HTTP(S) on server loopback, notify on entry into failure, and persist across daemon restarts; use interval `0` to remove a check. Reverse forwarding lets processes on the **trusted server** access a local loopback service. `0` requests a free remote port. Use `hostlane web unforward staging <assigned-port>` to close it; disconnecting also ends it. No public bind or automatic restore is offered for reverse forwards.
 
+### Audit and rollback
+
+Set `HOSTLANE_TASK` for a unit of work and `HOSTLANE_SESSION` for a conversation. Inspect it with `hostlane timeline --task deploy` or `hostlane replay --session review --command 2` (1-based, reads recorded stdout/stderr, never reruns commands). `hostlane audit-export --format csv > audit.csv` exports all pages; JSONL is the default. `hostlane rollback deploy` previews the files, and `--apply` reverts them newest first. Use `--host` or `--client` to narrow the task. Each revert retains its policy checks; a conflict stops the batch without undoing successful reverts.
+
+### Windows
+
+Run `hostlane.exe daemon start` for a background daemon; `daemon install` registers a least-privilege login task for the current user. The desktop app bundles the binary. Under Integrations, add it to your user PATH, then sign out and back in. OpenSSH agent keys use the Windows `ssh-agent` service if enabled. This supports Windows as the **local client**; remote web operations still expect Unix server tools.
+
 ### Environment variables
 
 | Variable                | Effect                                                                                                          |
@@ -297,8 +305,8 @@ The desktop app's Integrations page has the same snippet with a copy button.
 | **M8** Finish P0           | Add hosts by hand (H1); passwords and passphrase-protected keys stored in the system keychain (H2); service actions: logs, restart, stop, kill (P7); fresh screenshots                 | ✅ Done |
 | **M9** Long jobs & clients | Background jobs on `tmux` / `nohup` (E2), per-agent client names and tokens (A5), untrusted-data marking (S6)                                                                          | ✅ Done |
 | **M10** Web ops            | Exposure analysis (P5), Nginx/Caddy domain mapping (P6), health checks (P9), remote forwarding (T2), host profile (H6), host notes export (H7)                                         | ✅ Done |
-| **M11** Audit & rollback   | Per-task rollback (F5), timeline (L3), export (L4), session replay (M3)                                                                                                                | Planned |
-| **M12** Windows            | Named pipe with ACL, Windows OpenSSH agent, Task Scheduler autostart, background launch, PATH setup                                                                                    | Planned |
+| **M11** Audit & rollback   | Per-task rollback (F5), timeline (L3), export (L4), session replay (M3)                                                                                                                | ✅ Done |
+| **M12** Windows            | User-only named pipe, OpenSSH agent, login task, background launch and PATH setup                                                                                                      | ✅ Done |
 | **V1.0** Release           | Code signing and notarization, auto-update, Homebrew                                                                                                                                   | Planned |
 
 The order after M10 depends on which scenarios come up most in real use. The full requirement list, with IDs and priorities, is in [docs/requirements.md](docs/requirements.md) (Chinese).
@@ -398,7 +406,7 @@ Yes. Save it once with `hostlane secret set <host> --password` (or `--passphrase
 <details>
 <summary>Kubernetes? Windows?</summary>
 
-Port management covers systemd, Docker and docker-compose; Kubernetes is out of scope for now. macOS and Linux are the primary targets today; Windows named-pipe support is planned for V1.
+Port management covers systemd, Docker and docker-compose; Kubernetes is out of scope. The local runtime supports macOS, Linux and Windows.
 
 </details>
 

@@ -23,7 +23,7 @@
 </div>
 
 > [!WARNING]
-> Hostlane 仍处于早期开发阶段。M0–M10 已可用，包括 [Web 运维](#web-运维)。目前还没有签名发布版，见[路线图](#路线图)。
+> Hostlane 仍处于早期开发阶段，支持 [Web 运维](#web-运维)、任务回滚和 Windows 本机运行时。目前还没有签名发布版，见[路线图](#路线图)。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -179,6 +179,14 @@ hostlane web forwards
 
 健康检查探测服务器回环地址上的 HTTP(S)，首次发现异常时发系统通知，守护进程重启后恢复检查；间隔填 `0` 可移除。反向转发会让**可信服务器**上的进程访问本机回环服务。远程端口填 `0` 可自动分配；用 `hostlane web unforward staging <分配的端口>` 关闭。断开 SSH 后转发也会结束，不支持公网绑定或自动恢复。
 
+### 审计与回滚
+
+用 `HOSTLANE_TASK` 标记一次任务，`HOSTLANE_SESSION` 标记一次会话。`hostlane timeline --task deploy` 查看时间线；`hostlane replay --session review --command 2` 查看第 2 条命令的历史输出，不重新执行。`hostlane audit-export --format csv > audit.csv` 导出全部分页，默认格式为 JSONL。先用 `hostlane rollback deploy` 预览，再加 `--apply` 从新到旧逐项撤销。可加 `--host` 或 `--client` 缩小范围。每项都经过策略和内容哈希检查；遇到冲突停止，已撤销项不重复处理。
+
+### Windows
+
+运行 `hostlane.exe daemon start` 启动后台守护进程；`daemon install` 注册当前用户登录时运行的最低权限任务。桌面端内置二进制，接入页可以将它加入用户 PATH，重新登录后生效。启用 Windows OpenSSH 的 `ssh-agent` 服务后即可使用其中的密钥。这里支持的是 **Windows 本机客户端**；远程 Web 运维仍面向 Unix 服务器。
+
 ### 环境变量
 
 | 变量                    | 作用                                                                                   |
@@ -297,8 +305,8 @@ claude mcp add --scope user hostlane -- hostlane mcp
 | **M8** 补齐 P0      | 手动添加主机（H1）；密码和带口令私钥，保存在系统钥匙串（H2）；服务快捷操作：日志、重启、停止、结束进程（P7）；更新截图                     | ✅ 已完成 |
 | **M9** 长任务与接入 | 基于 `tmux` / `nohup` 的后台任务（E2）、按 agent 区分的客户端名称和令牌（A5）、不可信数据标记（S6）                                        | ✅ 已完成 |
 | **M10** web 运维    | 暴露面分析（P5）、Nginx/Caddy 域名映射（P6）、健康检查（P9）、远程转发（T2）、主机画像（H6）、主机备注导出（H7）                           | ✅ 已完成 |
-| **M11** 审计与回滚  | 按任务回滚（F5）、时间线（L3）、导出（L4）、会话回放（M3）                                                                                 | 计划中    |
-| **M12** Windows     | 命名管道和 ACL、Windows OpenSSH agent、任务计划程序开机启动、后台启动、PATH 设置                                                           | 计划中    |
+| **M11** 审计与回滚  | 按任务回滚（F5）、时间线（L3）、导出（L4）、会话回放（M3）                                                                                 | ✅ 已完成 |
+| **M12** Windows     | 用户专属命名管道、Windows OpenSSH agent、任务计划程序登录启动、后台启动、PATH 设置                                                         | ✅ 已完成 |
 | **V1.0** 发布       | 代码签名和公证、自动更新、Homebrew                                                                                                         | 计划中    |
 
 M10 之后的顺序按实际使用中最常用的场景决定。完整需求（含编号和优先级）见 [docs/requirements.md](docs/requirements.md)。
@@ -398,7 +406,7 @@ cargo build --release -p hostlane-cli && python3 scripts/bench.py
 <details>
 <summary>支持 Kubernetes 和 Windows 吗？</summary>
 
-端口管理支持 systemd、Docker 和 docker-compose，暂不支持 Kubernetes。目前主要支持 macOS 和 Linux；Windows 的命名管道支持计划在 V1 实现。
+端口管理支持 systemd、Docker 和 docker-compose，不支持 Kubernetes。本机运行时支持 macOS、Linux 和 Windows。
 
 </details>
 

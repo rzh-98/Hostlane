@@ -231,7 +231,7 @@ impl Client {
         })
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     async fn send(
         &self,
         line: &str,
@@ -242,22 +242,24 @@ impl Client {
         ),
         ClientError,
     > {
-        let stream = tokio::net::UnixStream::connect(&self.socket_path)
-            .await
-            .map_err(|err| match err.kind() {
-                io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused => {
-                    ClientError::NotRunning(self.socket_path.display().to_string())
-                }
-                _ => ClientError::Io(err),
-            })?;
-        let (reader, mut writer) = stream.into_split();
+        #[cfg(unix)]
+        let stream = tokio::net::UnixStream::connect(&self.socket_path).await;
+        #[cfg(windows)]
+        let stream = crate::windows_pipe::connect(&self.socket_path).await;
+        let stream = stream.map_err(|err| match err.kind() {
+            io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused => {
+                ClientError::NotRunning(self.socket_path.display().to_string())
+            }
+            _ => ClientError::Io(err),
+        })?;
+        let (reader, mut writer) = tokio::io::split(stream);
         writer.write_all(line.as_bytes()).await?;
         writer.write_all(b"\n").await?;
         writer.flush().await?;
         Ok((Box::new(BufReader::new(reader)), Box::new(writer)))
     }
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     async fn send(
         &self,
         _line: &str,

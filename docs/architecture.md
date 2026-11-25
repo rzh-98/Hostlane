@@ -404,8 +404,10 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）、`HOSTLANE_SESSION` 和
 - `.github/workflows/ci.yml`（push 到 main 和 PR）：
   - Linux 和 macOS：`cargo fmt --check`、`cargo clippy -D warnings`、`cargo test`、检查生成的 TS 类型已提交、`e2e.py`；Linux 上再跑 `bench.py`，结果写到 job summary。
   - 桌面端：`npm ci`、`typecheck`、`prettier --check`、`electron-vite build`。
-  - Windows：只跑 `cargo check`，允许失败，用来跟踪 M12 的进度。
+  - Windows：在原生 runner 检查所有 Rust 目标，验证后台启动、管道请求、桌面传输、登录任务注册和注销、打包后读取测试主机。测试使用临时数据目录。
 - `.github/workflows/release.yml`（推送 `v*` tag）：在 macOS（arm64）和 Linux（x64）上打安装包（dmg、zip、AppImage）并跑冒烟测试，另外打包 CLI（`hostlane-<版本>-<target>.tar.gz` 和 `.sha256`），发布到 GitHub Release；tag 带 `-` 时标为预发布。安装包没有签名，macOS 上需要 `xattr -cr Hostlane.app`。
+
+Windows 传输：默认名称为 `\\.\pipe\hostlane-<数据目录 SHA-256 的前 24 位>`。服务端设置当前用户 SID 为所有者，使用仅对该 SID 放行的受保护 DACL，拒绝网络客户端；首实例要求名称未被占用。Rust 客户端在发送任何请求前验证已打开句柄的所有者；Electron 通过内置 CLI 的 stdio 桥使用相同检查，不将凭据放在命令行参数中。Windows 使用当前用户的交互式登录任务，不保存密码、不要求提升权限。
 
 ## 性能实测
 

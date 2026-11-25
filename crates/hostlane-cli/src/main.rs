@@ -193,7 +193,15 @@ impl From<StreamArg> for OutputStream {
 #[derive(Subcommand)]
 enum DaemonCommand {
     /// Run the daemon in the foreground.
-    Run,
+    Run {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        #[arg(long)]
+        ssh_config: Option<PathBuf>,
+    },
+    #[cfg(windows)]
+    #[command(hide = true)]
+    Exchange,
     /// Start the daemon in the background if it is not running.
     Start,
     /// Ask the running daemon to exit.
@@ -349,7 +357,47 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             print_json(&client.call(&method, params).await?);
         }
         Command::Mcp => mcp::serve(socket, cli.socket).await?,
-        Command::Daemon(DaemonCommand::Run) => daemon_run(socket).await?,
+        Command::Daemon(DaemonCommand::Run {
+            data_dir,
+            ssh_config,
+        }) => daemon_run(socket, data_dir, ssh_config).await?,
+        #[cfg(windows)]
+        Command::Daemon(DaemonCommand::Exchange) => {
+            use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+            let mut frame = String::new();
+            std::io::BufRead::read_line(
+                &mut std::io::BufReader::new(std::io::stdin().take(8 * 1024 * 1024 + 1)),
+                &mut frame,
+            )?;
+            anyhow::ensure!(
+                frame.ends_with('\n') && frame.len() <= 8 * 1024 * 1024,
+                "invalid frame"
+            );
+            let subscribe =
+                serde_json::from_str::<Value>(&frame)?["method"] == method::EVENTS_SUBSCRIBE;
+            let stream = match hostlane_core::windows_pipe::connect(&socket).await {
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(ExitCode::from(3));
+                }
+                result => result?,
+            };
+            let mut pipe = tokio::io::BufReader::new(stream);
+            pipe.get_mut().write_all(frame.as_bytes()).await?;
+            let mut output = tokio::io::stdout();
+            if subscribe {
+                let (closed, parent) = tokio::sync::oneshot::channel();
+                std::thread::spawn(move || {
+                    let _ = std::io::stdin().read(&mut [0u8]);
+                    let _ = closed.send(());
+                });
+                tokio::select! {result=tokio::io::copy(&mut pipe,&mut output)=>{result?;}, _=parent=>{}}
+            } else {
+                frame.clear();
+                pipe.read_line(&mut frame).await?;
+                output.write_all(frame.as_bytes()).await?;
+            }
+            output.flush().await?;
+        }
         Command::Daemon(DaemonCommand::Start) => daemon_start(&client, cli.socket, json).await?,
         Command::Daemon(DaemonCommand::Stop) => {
             client.call(method::DAEMON_SHUTDOWN, Value::Null).await?;
@@ -957,7 +1005,11 @@ async fn watch(client: &Client, host: Option<String>, json: bool) -> Result<()> 
     Ok(())
 }
 
-async fn daemon_run(socket: PathBuf) -> Result<()> {
+async fn daemon_run(
+    socket: PathBuf,
+    data_dir: Option<PathBuf>,
+    ssh_config: Option<PathBuf>,
+) -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -965,7 +1017,14 @@ async fn daemon_run(socket: PathBuf) -> Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
-    let daemon = Arc::new(Daemon::open(DaemonOptions::from_env(socket))?);
+    let mut options = DaemonOptions::from_env(socket);
+    if let Some(dir) = data_dir {
+        options.data_dir = dir;
+    }
+    if let Some(config) = ssh_config {
+        options.ssh_config_path = config;
+    }
+    let daemon = Arc::new(Daemon::open(options)?);
     server::serve(daemon).await?;
     Ok(())
 }
@@ -998,6 +1057,8 @@ async fn daemon_install(
     if print {
         let content = if cfg!(target_os = "macos") {
             service::launchd_plist(&definition)
+        } else if cfg!(windows) {
+            service::task_xml(&definition)?
         } else {
             service::systemd_unit(&definition)
         };
@@ -1075,6 +1136,11 @@ pub(crate) async fn ensure_daemon(
     {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
     }
     command.spawn().context("failed to spawn daemon")?;
 

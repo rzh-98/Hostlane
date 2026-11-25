@@ -11,6 +11,30 @@ const SHELL_TIMEOUT_MS = 3_000
 /** Passed on to MCP configs so a custom or test setup reaches the same daemon. */
 const HOSTLANE_ENV = ['HOSTLANE_SOCKET', 'HOSTLANE_DATA_DIR', 'HOSTLANE_SSH_CONFIG']
 
+function userPath(add?: string): Promise<string> {
+  if (add?.includes(';'))
+    return Promise.reject(new Error('目录名包含分号，不能作为独立的 PATH 条目添加'))
+  const script = `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $key=[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment'); try { $p=[string]$key.GetValue('Path','','DoNotExpandEnvironmentNames'); $dir=$env:HOSTLANE_PATH_ENTRY; if ($dir -and -not (($p -split ';' | ForEach-Object { $_.TrimEnd('\\') }) -contains $dir.TrimEnd('\\'))) { $kind=if($key.GetValueNames() -contains 'Path'){$key.GetValueKind('Path')}else{'ExpandString'}; $p=($p.TrimEnd(';')+';'+$dir).TrimStart(';'); $key.SetValue('Path',$p,$kind) }; [Console]::Write([Environment]::ExpandEnvironmentVariables($p)) } finally { $key.Close() }`
+  return new Promise((resolve, reject) =>
+    execFile(
+      join(
+        process.env['SystemRoot'] ?? 'C:\\Windows',
+        'System32',
+        'WindowsPowerShell',
+        'v1.0',
+        'powershell.exe'
+      ),
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      {
+        windowsHide: true,
+        timeout: SERVICE_TIMEOUT_MS,
+        env: { ...process.env, HOSTLANE_PATH_ENTRY: add ?? '' }
+      },
+      (error, stdout) => (error ? reject(error) : resolve(stdout))
+    )
+  )
+}
+
 /** `~/.local/bin/hostlane`: user-writable, and on PATH in most shells. */
 function linkPath(): string {
   return join(homedir(), '.local', 'bin', 'hostlane')
@@ -26,7 +50,7 @@ function runCli<T>(args: string[], timeout: number): Promise<HostlaneReply<T>> {
     })
   }
   return new Promise((done) => {
-    execFile(bin, ['--json', ...args], { timeout }, (error, stdout, stderr) => {
+    execFile(bin, ['--json', ...args], { timeout, windowsHide: true }, (error, stdout, stderr) => {
       let parsed: unknown = null
       try {
         parsed = JSON.parse(stdout)
@@ -75,14 +99,22 @@ async function linkTarget(path: string): Promise<string | null> {
 
 export async function setupStatus(): Promise<SetupStatus> {
   const binary = binaryPath()
-  const link = linkPath()
-  const supported = process.platform !== 'win32'
+  const windows = process.platform === 'win32'
+  const link = windows ? binary : linkPath()
+  const supported = true
   const [target, path, service] = await Promise.all([
-    supported ? linkTarget(link) : Promise.resolve(null),
-    shellPath(),
+    windows ? Promise.resolve(null) : linkTarget(link),
+    windows ? userPath().catch(() => process.env['PATH'] ?? '') : shellPath(),
     runCli<ServiceStatus>(['daemon', 'service'], SERVICE_TIMEOUT_MS)
   ])
-  const linked = target === binary
+  const dirOnPath = path
+    .split(delimiter)
+    .some((part) =>
+      windows
+        ? part.replace(/\\+$/, '').toLowerCase() === dirname(link).toLowerCase()
+        : part === dirname(link)
+    )
+  const linked = windows ? dirOnPath : target === binary
   const env: Record<string, string> = {}
   for (const name of HOSTLANE_ENV) {
     const value = process.env[name]
@@ -98,7 +130,7 @@ export async function setupStatus(): Promise<SetupStatus> {
       linkPath: link,
       linkTarget: target,
       linked,
-      dirOnPath: path.split(delimiter).includes(dirname(link))
+      dirOnPath
     },
     service: service.ok ? service.result : null
   }
@@ -110,6 +142,10 @@ export async function linkCli(): Promise<HostlaneReply<SetupStatus>> {
   const binary = binaryPath()
   try {
     if (!existsSync(binary)) throw new Error(`找不到 hostlane 程序：${binary}`)
+    if (process.platform === 'win32') {
+      await userPath(dirname(binary))
+      return { ok: true, result: await setupStatus() }
+    }
     const current = await linkTarget(link)
     if (current !== null && current === link) {
       throw new Error(`${link} 已存在且不是符号链接，请先手动移走`)

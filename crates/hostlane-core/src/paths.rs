@@ -41,6 +41,10 @@ pub fn socket_path() -> PathBuf {
     if let Some(path) = std::env::var_os(SOCKET_ENV) {
         return PathBuf::from(path);
     }
+    if cfg!(windows) {
+        let suffix = crate::util::sha256_hex(data_dir().to_string_lossy().as_bytes());
+        return PathBuf::from(format!(r"\\.\pipe\hostlane-{}", &suffix[..24]));
+    }
     if cfg!(target_os = "linux")
         && let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR")
     {

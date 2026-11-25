@@ -1,6 +1,7 @@
 //! Local socket server: newline-delimited JSON-RPC, one task per connection.
 
 use std::io;
+#[cfg(unix)]
 use std::path::Path;
 use std::sync::Arc;
 
@@ -222,11 +223,33 @@ pub async fn serve(daemon: Arc<Daemon>) -> Result<(), ServeError> {
     result
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub async fn serve(daemon: Arc<Daemon>) -> Result<(), ServeError> {
+    let path = daemon.socket_path.clone();
+    let mut listen = crate::windows_pipe::listener(&path, true)?;
+    daemon.start().await;
+    let result = loop {
+        tokio::select! {
+            accepted=listen.connect()=>{
+                if let Err(err)=accepted {break Err(err.into());}
+                let next=match crate::windows_pipe::listener(&path,false){Ok(next)=>next,Err(err)=>break Err(err.into())};
+                let stream=std::mem::replace(&mut listen,next); let daemon=daemon.clone();
+                tokio::spawn(async move {let _ = serve_stream(daemon,stream).await;});
+            }
+            _=daemon.shutdown.notified()=>break Ok(()),
+            _=tokio::signal::ctrl_c()=>break Ok(()),
+        }
+    };
+    daemon.close().await;
+    result
+}
+
+#[cfg(not(any(unix, windows)))]
 pub async fn serve(_daemon: Arc<Daemon>) -> Result<(), ServeError> {
     Err(ServeError::Unsupported)
 }
 
+#[cfg(unix)]
 fn remove_socket(path: &Path) {
     if let Err(err) = std::fs::remove_file(path)
         && err.kind() != io::ErrorKind::NotFound

@@ -27,6 +27,10 @@ jobs:
             os: ubuntu-latest
             dist: dist:linux
             target: x86_64-unknown-linux-gnu
+          - name: Windows (x64)
+            os: windows-latest
+            dist: dist:win
+            target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: false
@@ -53,7 +57,7 @@ jobs:
         run: npm run ${{ matrix.dist }} -- --publish never
 
       - name: Smoke test (launch packaged app)
-        if: runner.os == 'macOS'
+        if: runner.os != 'Linux'
         run: node scripts/smoke.mjs screenshot-${{ runner.os }}.png
 
       - name: Smoke test (launch packaged app)
@@ -63,6 +67,7 @@ jobs:
           xvfb-run --auto-servernum node scripts/smoke.mjs screenshot-${{ runner.os }}.png
 
       - name: Archive the CLI
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           version=$(node -p "require('./package.json').version")
@@ -71,6 +76,16 @@ jobs:
           cp ../../target/release/hostlane ../../LICENSE ../../README.md "cli/${name}/"
           tar -C cli -czf "cli/${name}.tar.gz" "${name}"
           cd cli && shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256"
+
+      - name: Archive the Windows CLI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          New-Item -ItemType Directory -Path cli | Out-Null
+          $zip = "cli/hostlane-$version-${{ matrix.target }}.zip"
+          Compress-Archive -Path ../../target/release/hostlane.exe,../../LICENSE,../../README.md -DestinationPath $zip
+          "$((Get-FileHash $zip -Algorithm SHA256).Hash)  $(Split-Path -Leaf $zip)" | Set-Content "$zip.sha256"
 
       - name: Upload installers and CLI
         uses: actions/upload-artifact@v7
@@ -81,6 +96,8 @@ jobs:
             apps/desktop/release/*/*.dmg
             apps/desktop/release/*/*.zip
             apps/desktop/release/*/*.AppImage
+            apps/desktop/release/*/*-setup.exe
+            apps/desktop/cli/*.zip
             apps/desktop/cli/*.tar.gz
             apps/desktop/cli/*.sha256
 

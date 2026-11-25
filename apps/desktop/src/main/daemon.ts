@@ -1,6 +1,7 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { createConnection } from 'node:net'
+import { Duplex } from 'node:stream'
 import { join, resolve } from 'node:path'
 import { app } from 'electron'
 import type { HostlaneError, HostlaneEvent, HostlaneReply } from '../shared/ipc'
@@ -16,6 +17,9 @@ const SLOW_METHODS = new Set([
   'hosts.trust',
   'files.revert',
   'ports.list',
+  'web.report',
+  'hosts.profile',
+  'reverse.open',
   'ports.inspect',
   'ports.check',
   'ports.find_free',
@@ -49,6 +53,41 @@ function failure(
   return { ok: false, error: { kind, message, hint } }
 }
 
+function transport(path: string): Duplex {
+  if (process.platform !== 'win32') return createConnection(path)
+  const child = spawn(binaryPath(), ['daemon', 'exchange', '--socket', path], {
+    stdio: ['pipe', 'pipe', 'ignore'],
+    windowsHide: true
+  })
+  const stream = new Duplex({
+    read() {
+      child.stdout.resume()
+    },
+    write(chunk, encoding, done) {
+      child.stdin.write(chunk, encoding, done)
+    },
+    destroy(error, done) {
+      child.stdin.destroy()
+      child.kill()
+      done(error)
+    }
+  })
+  child.on('spawn', () => stream.emit('connect'))
+  child.stdout.on('data', (chunk) => {
+    if (!stream.push(chunk)) child.stdout.pause()
+  })
+  child.stdin.on('error', (error) => {
+    if ((error as NodeJS.ErrnoException).code !== 'EPIPE') stream.destroy(error)
+  })
+  child.on('error', (error) => stream.destroy(error))
+  child.on('close', (code) => {
+    if (code === 3)
+      stream.destroy(Object.assign(new Error('daemon not running'), { code: 'ENOENT' }))
+    else stream.destroy()
+  })
+  return stream
+}
+
 /** One JSON-RPC round trip on a fresh connection to the daemon socket. */
 export function callDaemon<T>(method: string, params?: unknown): Promise<HostlaneReply<T>> {
   const path = socketPath()
@@ -64,16 +103,19 @@ export function callDaemon<T>(method: string, params?: unknown): Promise<Hostlan
   return new Promise((done) => {
     let buffer = ''
     let settled = false
-    const socket = createConnection(path)
+    const socket = transport(path)
+    socket.setEncoding('utf8')
     const settle = (reply: HostlaneReply<T>) => {
       if (settled) return
       settled = true
+      clearTimeout(timer)
       socket.destroy()
       done(reply)
     }
 
-    socket.setTimeout(timeout, () =>
-      settle(failure('TIMEOUT', `守护进程在 ${timeout / 1000} 秒内没有响应`))
+    const timer = setTimeout(
+      () => settle(failure('TIMEOUT', `守护进程在 ${timeout / 1000} 秒内没有响应`)),
+      timeout
     )
     socket.on('connect', () => socket.write(`${request}\n`))
     socket.on('data', (chunk) => {
@@ -120,7 +162,7 @@ export function subscribeEvents(onEvent: (event: HostlaneEvent) => void): () => 
   let stopped = false
   let delay = RESUBSCRIBE_MIN_MS
   let timer: NodeJS.Timeout | undefined
-  let socket: ReturnType<typeof createConnection> | undefined
+  let socket: Duplex | undefined
 
   const retry = () => {
     socket = undefined
@@ -132,7 +174,8 @@ export function subscribeEvents(onEvent: (event: HostlaneEvent) => void): () => 
   const connect = () => {
     let buffer = ''
     let acknowledged = false
-    const current = createConnection(socketPath())
+    const current = transport(socketPath())
+    current.setEncoding('utf8')
     socket = current
     current.on('connect', () =>
       current.write(
@@ -189,13 +232,18 @@ export function startDaemon(): Promise<HostlaneReply<null>> {
     )
   }
   return new Promise((done) => {
-    execFile(bin, ['daemon', 'start'], { timeout: START_TIMEOUT_MS }, (error, _stdout, stderr) => {
-      if (error) {
-        done(failure('DAEMON_START_FAILED', stderr.trim() || error.message))
-      } else {
-        done({ ok: true, result: null })
+    execFile(
+      bin,
+      ['daemon', 'start'],
+      { timeout: START_TIMEOUT_MS, windowsHide: true },
+      (error, _stdout, stderr) => {
+        if (error) {
+          done(failure('DAEMON_START_FAILED', stderr.trim() || error.message))
+        } else {
+          done({ ok: true, result: null })
+        }
       }
-    })
+    )
   })
 }
 

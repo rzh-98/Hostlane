@@ -343,7 +343,9 @@ pub(crate) fn identity_files(entry: &Entry, ssh_dir: &Path) -> Vec<PathBuf> {
 
 #[cfg(unix)]
 type AgentStream = tokio::net::UnixStream;
-#[cfg(not(unix))]
+#[cfg(windows)]
+type AgentStream = tokio::net::windows::named_pipe::NamedPipeClient;
+#[cfg(not(any(unix, windows)))]
 type AgentStream = tokio::io::DuplexStream;
 
 #[cfg(unix)]
@@ -362,7 +364,28 @@ async fn connect_agent(entry: &Entry) -> Option<AgentClient<AgentStream>> {
     AgentClient::connect_uds(socket).await.ok()
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+async fn connect_agent(entry: &Entry) -> Option<AgentClient<AgentStream>> {
+    let pipe = match entry.options.identity_agent.as_deref() {
+        Some(value) if value.eq_ignore_ascii_case("none") => return None,
+        Some(value) if value != "SSH_AUTH_SOCK" => value.to_string(),
+        _ => {
+            std::env::var("SSH_AUTH_SOCK").unwrap_or_else(|_| r"\\.\pipe\openssh-ssh-agent".into())
+        }
+    };
+    if !pipe.starts_with(r"\\.\pipe\") {
+        return None;
+    }
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        AgentClient::connect_named_pipe(pipe),
+    )
+    .await
+    .ok()?
+    .ok()
+}
+
+#[cfg(not(any(unix, windows)))]
 async fn connect_agent(_entry: &Entry) -> Option<AgentClient<AgentStream>> {
     None
 }
