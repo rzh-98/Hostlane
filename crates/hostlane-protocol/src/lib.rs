@@ -21,6 +21,8 @@ mod services;
 mod status;
 mod tunnels;
 mod untrusted;
+mod web;
+pub use web::*;
 
 pub use audit::{AuditEntry, AuditList, AuditListParams, AuditOutcome};
 pub use clients::{
@@ -83,6 +85,15 @@ pub mod method {
     pub const HOSTS_DISCONNECT: &str = "hosts.disconnect";
     pub const HOSTS_TRUST: &str = "hosts.trust";
     pub const HOSTS_LABEL: &str = "hosts.label";
+    pub const HOSTS_PROFILE: &str = "hosts.profile";
+    pub const HOSTS_NOTE: &str = "hosts.note";
+    pub const HOSTS_EXPORT: &str = "hosts.export";
+    pub const WEB_REPORT: &str = "web.report";
+    pub const HEALTH_SET: &str = "health.set";
+    pub const HEALTH_LIST: &str = "health.list";
+    pub const REVERSE_OPEN: &str = "reverse.open";
+    pub const REVERSE_CLOSE: &str = "reverse.close";
+    pub const REVERSE_LIST: &str = "reverse.list";
     pub const HOSTS_ADD: &str = "hosts.add";
     pub const HOSTS_UPDATE: &str = "hosts.update";
     pub const HOSTS_REMOVE: &str = "hosts.remove";
@@ -148,6 +159,10 @@ pub mod method {
     /// `ticket_id` (retry after approval), `async` (return `APPROVAL_REQUIRED` instead
     /// of waiting) and `approval_timeout_secs` (how long to wait, default 120).
     pub const GATED: &[&str] = &[
+        HOSTS_PROFILE,
+        HOSTS_EXPORT,
+        WEB_REPORT,
+        REVERSE_OPEN,
         HOSTS_CONNECT,
         HOSTS_DISCONNECT,
         HOSTS_TRUST,
@@ -182,6 +197,15 @@ pub mod method {
 
     /// Every method the daemon currently implements.
     pub const ALL: &[&str] = &[
+        HOSTS_PROFILE,
+        HOSTS_EXPORT,
+        HOSTS_NOTE,
+        WEB_REPORT,
+        HEALTH_SET,
+        HEALTH_LIST,
+        REVERSE_OPEN,
+        REVERSE_CLOSE,
+        REVERSE_LIST,
         DAEMON_STATUS,
         DAEMON_SHUTDOWN,
         HOSTS_LIST,

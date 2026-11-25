@@ -4,7 +4,7 @@
 
 mod cert;
 mod discover;
-mod probe;
+pub(crate) mod probe;
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;

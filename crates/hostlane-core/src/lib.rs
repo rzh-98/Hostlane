@@ -14,6 +14,7 @@ mod events;
 mod exec;
 mod files;
 mod handlers;
+mod health;
 mod hosts;
 mod jobs;
 mod patch;
@@ -21,12 +22,14 @@ mod policy;
 mod pool;
 mod ports;
 mod remote;
+mod reverse;
 mod services;
 mod ssh;
 mod state;
 mod store;
 mod tunnels;
 mod util;
+mod web;
 
 pub use state::{Daemon, DaemonOptions, OpenError};
 

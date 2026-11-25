@@ -23,7 +23,7 @@
 </div>
 
 > [!WARNING]
-> Hostlane is in early development. M0–M9 work today: the daemon, CLI, `~/.ssh/config` import, a pooled SSH client with host key checks, `exec`, the session monitor, the audit log, file operations (read, list, search, hash-checked atomic edits, upload, download, revert) and ports (discovery, process/systemd/Docker mapping, HTTP/HTTPS probing with certificate expiry, notes, free-port lookup) and tunnels (local forwarding with conflict detection, saved tunnels restored on start, auto-reconnect, expiring agent tunnels) and policy (command risk levels, rules, blocking or async approvals with diffs, emergency stop), hosts added by hand, passwords and key passphrases kept in the system keychain, service actions (logs, restart, stop, kill), background jobs that survive disconnects, per-agent tokens and untrusted-data marking, plus an MCP server, a login service (launchd or systemd) and a desktop app that bundles the binary. There are no signed releases yet. See the [roadmap](#roadmap).
+> Hostlane is in early development. M0–M10 are available, including [web operations](#web-operations). There are no signed releases yet. See the [roadmap](#roadmap).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -160,6 +160,25 @@ Every command accepts `--json`. On success, the result goes to stdout; on failur
 | `hostlane daemon run`                                                                       | Run the daemon in the foreground                                                                                          |
 | `hostlane daemon socket-path`                                                               | Print the socket path clients use                                                                                         |
 
+### Web operations
+
+Select a host in the desktop app, or replace `staging` with an alias from `hostlane hosts`:
+
+```bash
+hostlane web profile staging
+hostlane web report staging
+hostlane web note staging < maintenance.md
+hostlane web export staging > staging.md
+hostlane web monitor staging 8080 60
+hostlane web health
+hostlane web reverse staging 0 3000
+hostlane web forwards
+```
+
+`report` estimates exposure from listener addresses and readable host firewall rules; it does not test public reachability. It maps static Nginx/Caddy domains to upstream ports, not dynamic variables or arbitrary includes. The MCP tools `host_profile`, `web_report` and `host_context` are read-only.
+
+Health checks use HTTP(S) on server loopback, notify on entry into failure, and persist across daemon restarts; use interval `0` to remove a check. Reverse forwarding lets processes on the **trusted server** access a local loopback service. `0` requests a free remote port. Use `hostlane web unforward staging <assigned-port>` to close it; disconnecting also ends it. No public bind or automatic restore is offered for reverse forwards.
+
 ### Environment variables
 
 | Variable                | Effect                                                                                                          |
@@ -277,7 +296,7 @@ The desktop app's Integrations page has the same snippet with a copy button.
 | **M7** Engineering         | GitHub Actions (checks, end-to-end tests against a local sshd on Linux and macOS, Windows build check, tagged releases of installers and CLI archives), measured performance, app icon | ✅ Done |
 | **M8** Finish P0           | Add hosts by hand (H1); passwords and passphrase-protected keys stored in the system keychain (H2); service actions: logs, restart, stop, kill (P7); fresh screenshots                 | ✅ Done |
 | **M9** Long jobs & clients | Background jobs on `tmux` / `nohup` (E2), per-agent client names and tokens (A5), untrusted-data marking (S6)                                                                          | ✅ Done |
-| **M10** Web ops            | Exposure analysis (P5), Nginx/Caddy domain mapping (P6), health checks (P9), remote forwarding (T2), host profile (H6), host notes export (H7)                                         | Planned |
+| **M10** Web ops            | Exposure analysis (P5), Nginx/Caddy domain mapping (P6), health checks (P9), remote forwarding (T2), host profile (H6), host notes export (H7)                                         | ✅ Done |
 | **M11** Audit & rollback   | Per-task rollback (F5), timeline (L3), export (L4), session replay (M3)                                                                                                                | Planned |
 | **M12** Windows            | Named pipe with ACL, Windows OpenSSH agent, Task Scheduler autostart, background launch, PATH setup                                                                                    | Planned |
 | **V1.0** Release           | Code signing and notarization, auto-update, Homebrew                                                                                                                                   | Planned |

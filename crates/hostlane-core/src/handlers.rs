@@ -28,6 +28,9 @@ use crate::util::{now_ms, sha256_hex};
 /// Policy, host and credential changes, recorded in the audit log along with the
 /// gated methods.
 const POLICY_CHANGES: &[&str] = &[
+    method::HOSTS_NOTE,
+    method::HEALTH_SET,
+    method::REVERSE_CLOSE,
     method::HOSTS_LABEL,
     method::HOSTS_ADD,
     method::HOSTS_UPDATE,
@@ -166,7 +169,16 @@ pub(crate) fn redact_params(params: &Value) -> Value {
 fn summarize(value: &Value) -> Value {
     let mut value = value.clone();
     if let Some(object) = value.as_object_mut() {
-        for key in ["stdout", "stderr", "content", "data", "token"] {
+        for key in [
+            "stdout",
+            "stderr",
+            "content",
+            "data",
+            "token",
+            "markdown",
+            "routes",
+            "listeners",
+        ] {
             object.remove(key);
         }
         for (key, count) in [
@@ -300,6 +312,34 @@ async fn run(
             to_value(files::revert(daemon, client, &params.change_id).await?)
         }
         method::PORTS_LIST => to_value(ports::list(daemon, parse(params)?).await?),
+        method::HOSTS_PROFILE => {
+            to_value(crate::web::profile(daemon, parse::<HostParams>(params)?.host).await?)
+        }
+        method::HOSTS_NOTE => {
+            require_person(client, "change host notes")?;
+            to_value(crate::web::note(daemon, parse(params)?).await?)
+        }
+        method::HOSTS_EXPORT => {
+            to_value(crate::web::export(daemon, parse::<HostParams>(params)?.host).await?)
+        }
+        method::WEB_REPORT => {
+            to_value(crate::web::report(daemon, parse::<HostParams>(params)?.host).await?)
+        }
+        method::HEALTH_LIST => to_value(daemon.health.list().await),
+        method::HEALTH_SET => {
+            require_person(client, "configure health monitoring")?;
+            to_value(daemon.health.set(daemon, parse(params)?).await?)
+        }
+        method::REVERSE_LIST => to_value(daemon.reverse.list().await),
+        method::REVERSE_OPEN => {
+            require_person(client, "expose a local service to the server")?;
+            to_value(daemon.reverse.open(daemon, parse(params)?).await?)
+        }
+        method::REVERSE_CLOSE => {
+            require_person(client, "close a reverse forward")?;
+            let target: hostlane_protocol::PortParams = parse(params)?;
+            to_value(daemon.reverse.close(&target.host, target.port).await?)
+        }
         method::PORTS_INSPECT => to_value(ports::inspect(daemon, parse(params)?).await?),
         method::PORTS_CHECK => to_value(ports::check(daemon, parse(params)?).await?),
         method::PORTS_FIND_FREE => to_value(ports::find_free(daemon, parse(params)?).await?),

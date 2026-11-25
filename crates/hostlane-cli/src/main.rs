@@ -26,6 +26,7 @@ mod policy;
 mod ports;
 mod service;
 mod tunnels;
+mod web;
 
 /// Lets your own agent operate remote servers over SSH, safely, from this machine.
 #[derive(Parser)]
@@ -114,6 +115,9 @@ enum Command {
     Jobs(jobs::JobsCommand),
     #[command(flatten)]
     Clients(clients::ClientsCommand),
+    /// Inspect web services and manage host context and monitoring.
+    #[command(subcommand)]
+    Web(web::WebCommand),
     /// Open the pooled connection to a host and show its host key.
     Connect { host: String },
     /// Trust a host's key after you have verified its fingerprint.
@@ -299,6 +303,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Command::Manage(command) => return manage::run(&client, command, json).await,
         Command::Jobs(command) => return jobs::run(&client, command, json).await,
         Command::Clients(command) => clients::run(&client, command, json).await?,
+        Command::Web(command) => web::run(&client, command, json).await?,
         Command::Connect { host } => connect(&client, &host, json).await?,
         Command::Trust { host, fingerprint } => trust(&client, &host, fingerprint, json).await?,
         Command::Disconnect { host } => {

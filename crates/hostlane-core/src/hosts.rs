@@ -141,6 +141,29 @@ pub(crate) async fn remove(daemon: &Daemon, id: &str) -> Result<HostRemoved, Rpc
         }
     }
     daemon.pool.disconnect(id).await;
+    for check in daemon
+        .health
+        .list()
+        .await
+        .into_iter()
+        .filter(|check| check.host == id)
+    {
+        daemon
+            .health
+            .set(
+                daemon,
+                hostlane_protocol::HealthParams {
+                    host: id.into(),
+                    port: check.port,
+                    interval_secs: 0,
+                },
+            )
+            .await?;
+    }
+    daemon
+        .store
+        .set_setting(format!("hostnote:{id}"), None)
+        .await?;
     daemon.store.delete_manual_host(id.to_string()).await?;
     let account = secrets::account(SecretKind::Password, id);
     let deleted_password = daemon.secrets.delete(&account).await.unwrap_or(false);

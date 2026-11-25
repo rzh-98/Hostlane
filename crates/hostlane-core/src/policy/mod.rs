@@ -557,6 +557,16 @@ async fn describe(daemon: &Daemon, name: &str, params: &Value) -> Described {
             assessment.raise(Risk::L2, format!("trusts a new host key ({fingerprint})"));
             summary = format!("trust host key {fingerprint}");
         }
+        method::REVERSE_OPEN => {
+            assessment.raise(
+                Risk::L2,
+                "makes a local service reachable from the SSH server",
+            );
+            summary = format!(
+                "forward remote port {} to local port {}",
+                params["remote_port"], params["local_port"]
+            );
+        }
         method::TUNNELS_OPEN | method::TUNNELS_UPDATE => {
             let remote = format!(
                 "{}:{}",
@@ -895,12 +905,16 @@ fn notify(approval: &Approval) {
         ),
         180,
     );
+    system_notice(title, &body);
+}
+
+pub(crate) fn system_notice(title: &str, body: &str) {
     #[cfg(target_os = "macos")]
     let command = {
         let quote = |text: &str| format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""));
         let script = format!(
             "display notification {} with title {}",
-            quote(&body),
+            quote(body),
             quote(title)
         );
         let mut command = std::process::Command::new("osascript");
@@ -910,7 +924,7 @@ fn notify(approval: &Approval) {
     #[cfg(all(unix, not(target_os = "macos")))]
     let command = {
         let mut command = std::process::Command::new("notify-send");
-        command.arg("--app-name=Hostlane").arg(title).arg(&body);
+        command.arg("--app-name=Hostlane").arg(title).arg(body);
         Some(command)
     };
     #[cfg(not(unix))]

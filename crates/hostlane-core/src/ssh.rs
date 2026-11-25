@@ -47,6 +47,7 @@ pub enum Trust {
 }
 
 pub struct Established {
+    pub routes: crate::reverse::Routes,
     pub handle: SshHandle,
     pub host_key: HostKeyInfo,
     /// Time to open the TCP connection (or jump channel).
@@ -58,6 +59,7 @@ pub struct Established {
 type Seen = Arc<Mutex<Option<(HostKeyInfo, Check, PublicKey)>>>;
 
 pub struct ClientHandler {
+    routes: crate::reverse::Routes,
     host: String,
     name: String,
     files: Vec<PathBuf>,
@@ -67,6 +69,25 @@ pub struct ClientHandler {
 
 impl client::Handler for ClientHandler {
     type Error = russh::Error;
+
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        address: &str,
+        port: u32,
+        peer: &str,
+        _peer_port: u32,
+        reply: client::ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        if peer
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+        {
+            self.routes.incoming(address, port, reply, channel);
+        }
+        Ok(())
+    }
 
     async fn check_server_key(
         &mut self,
@@ -215,7 +236,9 @@ where
         &name, &files,
     )));
     let seen: Seen = Arc::default();
+    let routes = crate::reverse::Routes::default();
     let handler = ClientHandler {
+        routes: routes.clone(),
         host: host.clone(),
         name: name.clone(),
         files,
@@ -281,6 +304,7 @@ where
         }
         authenticate(&mut handle, entry, locations).await?;
         Ok(Established {
+            routes,
             handle,
             host_key,
             transport_ms,

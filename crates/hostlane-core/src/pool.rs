@@ -25,6 +25,7 @@ const PING_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_JUMPS: usize = 8;
 
 pub struct Conn {
+    pub routes: crate::reverse::Routes,
     pub handle: SshHandle,
     channels: Arc<Semaphore>,
     /// Keeps the jump host's connection open while this one uses it.
@@ -210,6 +211,7 @@ impl Pool {
             match result {
                 Ok((established, via)) => {
                     let conn = Arc::new(Conn {
+                        routes: established.routes,
                         handle: established.handle,
                         channels: Arc::new(Semaphore::new(MAX_CHANNELS)),
                         _via: via,

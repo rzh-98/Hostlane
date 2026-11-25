@@ -13,6 +13,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 import threading
 import urllib.request
 
@@ -231,6 +232,48 @@ def main():
     expect(check["in_use"], f"port-check: {check}")
     hl("port-note", "test", str(http_port), "--name", "e2e", "--project", "hostlane")
     step("ports discovers and probes the web server")
+
+    profile = hl("web", "profile", "test")
+    expect(profile["system"] and int(profile["cpu"]) > 0, f"profile: {profile}")
+    hl("web", "note", "test", stdin="Maintenance window: Friday\n")
+    context = hl("web", "export", "test")
+    expect("Maintenance window: Friday" in context["markdown"], f"context: {context}")
+    report = hl("web", "report", "test")
+    expect(any(item["port"] == http_port and item["assessment"] == "loopback" for item in report["listeners"]), "loopback exposure not identified")
+    step("profile, Markdown notes and listener exposure")
+
+    hl("web", "monitor", "test", str(http_port), "10")
+    for _ in range(25):
+        health = hl("web", "health")
+        if health and health[0]["healthy"] is not None:
+            break
+        time.sleep(1)
+    expect(health and health[0]["healthy"], f"health check: {health}")
+    unavailable_port = str(free_port())
+    hl("web", "monitor", "test", unavailable_port, "10")
+    hl("daemon", "stop")
+    hl("daemon", "start")
+    for _ in range(30):
+        health = hl("web", "health")
+        if any(row["port"] == int(unavailable_port) and row["healthy"] is False for row in health):
+            break
+        time.sleep(1)
+    expect(any(row["port"] == int(unavailable_port) and row["healthy"] is False for row in health), "failed service not detected after restart")
+    hl("web", "monitor", "test", unavailable_port, "0")
+    hl("web", "monitor", "test", str(http_port), "0")
+    expect(hl("web", "health") == [], "monitor not removed")
+    step("daemon schedules an HTTP health check")
+
+    reverse = approved("web", "reverse", "test", "0", str(http_port))
+    assigned = reverse["remote_port"]
+    expect(reverse in hl("web", "forwards"), "missing reverse listener")
+    with urllib.request.urlopen(f"http://127.0.0.1:{assigned}/", timeout=10) as response:
+        expect(b"e2e page" in response.read(), "reverse forward body")
+    hl("web", "unforward", "test", str(assigned))
+    expect(hl("web", "forwards") == [], "reverse forward not removed")
+    with socket.socket() as sock:
+        expect(sock.connect_ex(("127.0.0.1", assigned)) != 0, "closed reverse port still listening")
+    step("approved reverse forward transfers HTTP and closes")
 
     opened = hl("tunnel", "open", "test", str(http_port))["tunnel"]
     with urllib.request.urlopen(opened["url"], timeout=10) as response:

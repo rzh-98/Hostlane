@@ -65,6 +65,9 @@ pub struct Daemon {
     pub(crate) jobs: Arc<Jobs>,
     pub(crate) clients: Clients,
     pub(crate) shutdown: Notify,
+    pub(crate) health: crate::health::Health,
+    pub(crate) reverse: crate::reverse::Reverse,
+    monitor: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 fn private_dir(path: &PathBuf) -> Result<(), OpenError> {
@@ -133,11 +136,18 @@ impl Daemon {
             clients,
             events,
             shutdown: Notify::new(),
+            health: Default::default(),
+            reverse: Default::default(),
+            monitor: Default::default(),
         })
     }
 
     /// Recovers state left by a previous run and starts background maintenance.
-    pub async fn start(&self) {
+    pub async fn start(self: &Arc<Self>) {
+        if let Err(err) = self.health.load(self).await {
+            tracing::warn!(%err,"cannot load health checks");
+        }
+        *self.monitor.lock().unwrap() = Some(tokio::spawn(crate::health::monitor(self.clone())));
         match self.store.recover_interrupted(now_ms()).await {
             Ok(0) => {}
             Ok(count) => tracing::warn!(
@@ -190,6 +200,9 @@ impl Daemon {
 
     /// Closes SSH connections before the process exits.
     pub async fn close(&self) {
+        if let Some(task) = self.monitor.lock().unwrap().take() {
+            task.abort();
+        }
         self.tunnels.stop_all().await;
         self.pool.disconnect_all().await;
     }

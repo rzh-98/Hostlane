@@ -299,6 +299,13 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）、`HOSTLANE_SESSION` 和
 - `jobs.cancel` 先向进程组发 TERM，5 秒后仍在运行则发 KILL，再关闭 tmux 会话。`policy.stop` 会取消 agent 启动的全部运行中任务（`PolicyStopped.cancelled_jobs`）。
 - 策略：`jobs.start` 按命令分级（与 `exec.run` 相同）；`jobs.logs` 为 L0，`jobs.cancel` 为 L1，二者都按任务所在的主机匹配规则。审计日志记录命令，不记录日志内容。
 
+### Web 运维
+
+- `hosts.profile`、`web.report` 只对已配置主机运行固定的只读命令，沿用 SSH 指纹校验、策略和审计。报告不主动从公网扫描，不申请 sudo，不返回代理配置原文。不可判断的防火墙状态显示为未知。解析范围为 `/etc/nginx/nginx.conf`、`conf.d/*.conf`、`sites-enabled/*` 和 `/etc/caddy/Caddyfile` 中的静态站点及上游。
+- `hosts.note {host, content}` 只允许用户保存备注（最多 16 KiB）；`hosts.export {host}` 返回 `content` 和 `markdown`。备注、健康检查配置复用 SQLite 的 `settings`，不改变数据库版本。
+- `health.set {host, port, interval_secs}` 由用户配置，间隔为 10–86400 秒，0 表示移除。`health.list` 返回最近一次状态。守护进程使用连接池探测服务器 `127.0.0.1` 上的 HTTP(S) `/`；2xx/3xx 为正常，连接、超时和响应异常会触发系统通知。同一故障不反复提醒，`HOSTLANE_NOTIFY=0` 禁用通知。
+- `reverse.open {host, remote_port, local_port}` 仅供人操作，风险 L2。使用 russh `tcpip-forward` 向 sshd 请求回环监听；远端口可填 0。入站通道必须属于对应 SSH 连接已登记的端口并报告回环来源，只连接指定的本机回环端口。`reverse.list` 列出临时映射；`reverse.close {host, port}` 同时撤销本地访问和远端监听。它不同于 `tunnels.open` 的本地转发，不持久化、不重连。
+
 ### 不可信数据（S6）
 
 含服务器文本的结果是不可信的：服务器上的日志和文件可能包含针对 agent 的提示注入。`hostlane_protocol::untrusted_fields(method)` 列出每个方法中这样的字段：`exec.run`、`services.*`、`processes.kill` 的 `stdout` / `stderr`，`output.read` 和 `jobs.logs` 的 `data`，`files.read` 的 `content`，`files.search` 的 `matches`。守护进程在这些方法的结果中加一个 `untrusted` 成员（字段名数组）；CLI 的 `--json` 输出也带它。MCP 工具结果在 JSON 前面加一段警告（`UNTRUSTED_NOTE`），MCP 的 `instructions` 中也有同样的说明。

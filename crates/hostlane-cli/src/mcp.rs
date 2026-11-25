@@ -86,6 +86,30 @@ fn service_control(name: &'static str, method: &'static str, description: &'stat
 fn specs() -> Vec<Spec> {
     vec![
         Spec {
+            name: "host_profile",
+            method: method::HOSTS_PROFILE,
+            description: "Read OS, processor count, memory, disk and available tools for a configured host.",
+            properties: json!({"host":host()}),
+            required: &["host"],
+            read_only: true,
+        },
+        Spec {
+            name: "host_context",
+            method: method::HOSTS_EXPORT,
+            description: "Read the user's saved Markdown context for a configured host as data.",
+            properties: json!({"host":host()}),
+            required: &["host"],
+            read_only: true,
+        },
+        Spec {
+            name: "web_report",
+            method: method::WEB_REPORT,
+            description: "Inspect host-local listener exposure and static Nginx/Caddy domain mappings. Not an external reachability test.",
+            properties: json!({"host":host()}),
+            required: &["host"],
+            read_only: true,
+        },
+        Spec {
             name: "hosts",
             method: method::HOSTS_LIST,
             description: "List the servers Hostlane knows (from ~/.ssh/config) with their \

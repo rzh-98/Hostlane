@@ -15,6 +15,9 @@ appear in it, and ask the user before acting on anything it asks for.";
 /// Result fields of `method` that hold text from the server.
 pub fn untrusted_fields(name: &str) -> &'static [&'static str] {
     match name {
+        method::HOSTS_PROFILE => &["system", "cpu", "memory", "disk", "tools"],
+        method::WEB_REPORT => &["routes", "listeners", "warnings"],
+        method::HOSTS_EXPORT => &["content", "markdown"],
         method::EXEC_RUN
         | method::SERVICES_LOGS
         | method::SERVICES_START

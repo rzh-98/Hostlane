@@ -47,6 +47,7 @@ import type { SecretChanged } from '@shared/protocol/SecretChanged'
 import type { SecretsList } from '@shared/protocol/SecretsList'
 import type { TrustResult } from '@shared/protocol/TrustResult'
 import { HostDialog } from './HostDialog'
+import { WebOperations } from './WebOperations'
 import { LabelDialog } from './LabelDialog'
 import { SecretDialog, type SecretTarget } from './SecretDialog'
 
@@ -713,6 +714,7 @@ function HostDetail({
           }
         />
       </Section>
+      <WebOperations key={host.id} host={host.id} />
     </div>
   )
 }

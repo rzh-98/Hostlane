@@ -23,7 +23,7 @@
 </div>
 
 > [!WARNING]
-> Hostlane 仍处于早期开发阶段。目前可用的是 M0–M9：守护进程、CLI、导入 `~/.ssh/config`、SSH 连接池与主机指纹校验、`exec`、会话监视器、审计日志、文件操作（读取、列目录、搜索、带哈希校验的原子修改、上传、下载、撤销），端口管理（端口发现，关联进程、systemd 和 Docker，HTTP/HTTPS 探测和证书有效期，备注，空闲端口查找）和隧道（本地转发和端口冲突检测、保存的隧道随守护进程恢复、断线自动重连、agent 临时隧道到期关闭）和策略（命令风险分级、规则、带 diff 的阻塞式或异步审批、急停），手动添加主机，密码和密钥口令保存在系统钥匙串，服务快捷操作（日志、重启、停止、结束进程），断线后继续运行的后台任务、按 agent 区分的令牌和不可信数据标记，以及 MCP Server、登录时启动的后台服务（launchd 或 systemd）和内置二进制的桌面端安装包。目前还没有签名发布版，见[路线图](#路线图)。
+> Hostlane 仍处于早期开发阶段。M0–M10 已可用，包括 [Web 运维](#web-运维)。目前还没有签名发布版，见[路线图](#路线图)。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -160,6 +160,25 @@ npm run pack        # 或 npm run dist:mac / dist:linux
 | `hostlane daemon run`                                                                       | 在前台运行守护进程                                                                                |
 | `hostlane daemon socket-path`                                                               | 输出客户端使用的 socket 路径                                                                      |
 
+### Web 运维
+
+桌面端选择「主机 → Web 运维」，或将下列 `staging` 换成 `hostlane hosts` 中的主机别名：
+
+```bash
+hostlane web profile staging
+hostlane web report staging
+hostlane web note staging < maintenance.md
+hostlane web export staging > staging.md
+hostlane web monitor staging 8080 60
+hostlane web health
+hostlane web reverse staging 0 3000
+hostlane web forwards
+```
+
+`report` 结合监听地址和可读取的本机防火墙规则估计暴露面，不是公网连通性测试。域名映射只解析标准位置中的静态 Nginx/Caddy 配置，不展开变量或任意 include。MCP 提供只读工具 `host_profile`、`web_report`、`host_context`。
+
+健康检查探测服务器回环地址上的 HTTP(S)，首次发现异常时发系统通知，守护进程重启后恢复检查；间隔填 `0` 可移除。反向转发会让**可信服务器**上的进程访问本机回环服务。远程端口填 `0` 可自动分配；用 `hostlane web unforward staging <分配的端口>` 关闭。断开 SSH 后转发也会结束，不支持公网绑定或自动恢复。
+
 ### 环境变量
 
 | 变量                    | 作用                                                                                   |
@@ -277,7 +296,7 @@ claude mcp add --scope user hostlane -- hostlane mcp
 | **M7** 工程化       | GitHub Actions（CI 检查、Linux 和 macOS 上对本机 sshd 的端到端测试、Windows 编译检查、打 tag 发布安装包和 CLI 压缩包）、性能实测、应用图标 | ✅ 已完成 |
 | **M8** 补齐 P0      | 手动添加主机（H1）；密码和带口令私钥，保存在系统钥匙串（H2）；服务快捷操作：日志、重启、停止、结束进程（P7）；更新截图                     | ✅ 已完成 |
 | **M9** 长任务与接入 | 基于 `tmux` / `nohup` 的后台任务（E2）、按 agent 区分的客户端名称和令牌（A5）、不可信数据标记（S6）                                        | ✅ 已完成 |
-| **M10** web 运维    | 暴露面分析（P5）、Nginx/Caddy 域名映射（P6）、健康检查（P9）、远程转发（T2）、主机画像（H6）、主机备注导出（H7）                           | 计划中    |
+| **M10** web 运维    | 暴露面分析（P5）、Nginx/Caddy 域名映射（P6）、健康检查（P9）、远程转发（T2）、主机画像（H6）、主机备注导出（H7）                           | ✅ 已完成 |
 | **M11** 审计与回滚  | 按任务回滚（F5）、时间线（L3）、导出（L4）、会话回放（M3）                                                                                 | 计划中    |
 | **M12** Windows     | 命名管道和 ACL、Windows OpenSSH agent、任务计划程序开机启动、后台启动、PATH 设置                                                           | 计划中    |
 | **V1.0** 发布       | 代码签名和公证、自动更新、Homebrew                                                                                                         | 计划中    |
