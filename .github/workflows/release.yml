@@ -137,4 +137,4 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
-            Hostlane 1.0.0 is a stable feature release. Installers are unsigned; macOS builds are not notarized. Download only from this official release. Installation and upgrades are manual. Automatic updates and Homebrew distribution are not yet available.
+            Download Hostlane ${{ github.ref_name }} for macOS (Apple Silicon), Windows (x64) or Linux (x64) from the assets below. Installers are unsigned; macOS builds are not notarized. Installation and upgrades are manual.
