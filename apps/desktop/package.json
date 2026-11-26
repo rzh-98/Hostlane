@@ -1,7 +1,7 @@
 {
   "name": "hostlane-desktop",
   "productName": "Hostlane",
-  "version": "1.0.0-rc.1",
+  "version": "1.0.0",
   "description": "Hostlane desktop: manage hosts, ports, tunnels and approvals for your own agent.",
   "main": "./out/main/index.js",
   "private": true,

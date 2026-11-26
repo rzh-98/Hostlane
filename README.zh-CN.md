@@ -6,7 +6,7 @@
   <p>不内置 LLM；服务器端不需要安装任何组件，只要有 <code>sshd</code>。</p>
   <p>
     <a href="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml/badge.svg" /></a>
-    <img alt="Status" src="https://img.shields.io/badge/status-v1.0_release_candidate-blue" />
+    <img alt="Status" src="https://img.shields.io/badge/status-v1.0.0-blue" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -23,7 +23,7 @@
 </div>
 
 > [!WARNING]
-> **1.0.0-rc.1 是候选版，不是已签名的正式版。** 本版包含 [Web 运维](#web-运维)、任务回滚和 Windows 本机运行时。目前需要手动升级，尚不支持自动更新或通过 Homebrew 安装。见[路线图](#路线图)。
+> **Hostlane 1.0.0 已发布。** 本版包含 [Web 运维](#web-运维)、任务回滚和 Windows 本机运行时。安装包尚未签名，macOS 版本未经公证；请仅从官方 GitHub Release 下载，并按系统提示手动安装。升级需要手动完成，暂不支持自动更新或通过 Homebrew 安装。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -80,7 +80,7 @@ Electron UI ──IPC──► 主进程 ──本地 socket──► hostlane d
 2. **接入 → MCP**：选 Codex、Claude Code 或 Cursor，关闭目标客户端，点「写入客户端配置」，再重新打开客户端。用的是应用内置程序，不需要安装 CLI 到 PATH。启用令牌时，可从「新建令牌」直接写入带令牌的配置。
 3. **会话、审批、审计**：在页面查看 agent 的操作并处理审批；审计页可导出全部筛选结果，或选「任务时间线」、输入任务 ID 后预览回滚。批量回滚按整个任务处理，时间和风险筛选需设为「全部」。
 
-以下命令只用于从源码开发；目前没有已签名的正式发行版。
+桌面安装包尚未签名，macOS 版本未经公证。可从[官方 GitHub Releases](https://github.com/rzh-98/Hostlane/releases/latest)下载安装包和 CLI 压缩包；升级需要手动完成。以下命令只用于从源码开发。
 
 **环境要求**：Rust 1.89+、Node.js 22.12+、npm 10+。
 
@@ -315,7 +315,8 @@ claude mcp add --scope user hostlane -- hostlane mcp
 | **M10** web 运维    | 暴露面分析（P5）、Nginx/Caddy 域名映射（P6）、健康检查（P9）、远程转发（T2）、主机画像（H6）、主机备注导出（H7）                           | ✅ 已完成 |
 | **M11** 审计与回滚  | 按任务回滚（F5）、时间线（L3）、导出（L4）、会话回放（M3）                                                                                 | ✅ 已完成 |
 | **M12** Windows     | 用户专属命名管道、Windows OpenSSH agent、任务计划程序登录启动、后台启动、PATH 设置                                                         | ✅ 已完成 |
-| **V1.0** 发布       | 代码签名和公证、自动更新、Homebrew                                                                                                         | 计划中    |
+| **V1.0** 发布       | 跨平台稳定版，包含 CLI 和桌面安装包                                                                                                        | ✅ 已发布 |
+| **V1.0 后续分发**   | 代码签名和公证、自动更新、Homebrew                                                                                                         | 计划中    |
 
 M10 之后的顺序按实际使用中最常用的场景决定。完整需求（含编号和优先级）见 [docs/requirements.md](docs/requirements.md)。
 

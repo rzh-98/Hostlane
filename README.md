@@ -6,7 +6,7 @@
   <p>No built-in LLM. Nothing to install on the server: <code>sshd</code> is enough.</p>
   <p>
     <a href="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml/badge.svg" /></a>
-    <img alt="Status" src="https://img.shields.io/badge/status-v1.0_release_candidate-blue" />
+    <img alt="Status" src="https://img.shields.io/badge/status-v1.0.0-blue" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -23,7 +23,7 @@
 </div>
 
 > [!WARNING]
-> **1.0.0-rc.1 is a release candidate, not a signed stable release.** It includes [web operations](#web-operations), task rollback and the Windows runtime. Upgrade manually; automatic updates and Homebrew distribution are not available yet. See the [roadmap](#roadmap).
+> **Hostlane 1.0.0 is released.** It includes [web operations](#web-operations), task rollback and the Windows runtime. Installers are unsigned and macOS builds are not notarized; download only from the official GitHub release and follow the platform's manual install prompts. Upgrades are manual; automatic updates and Homebrew distribution are not available yet.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -76,7 +76,7 @@ Details: [architecture and protocol](docs/architecture.md) (Chinese).
 
 With a desktop build, no terminal is needed: open **Hosts → Add host**, browse for a private key or save a password using the system dialog, then connect and check the fingerprint. Under **Integrations → MCP**, select your client and write its configuration. Restart the client; no PATH edits are needed. In **Audit**, export filtered records or select a task timeline to preview a rollback. The session monitor stays read-only.
 
-There are no signed releases yet. The commands below are for building from source.
+Installers are unsigned and macOS builds are not notarized. Download the desktop installers and CLI archives from the [official GitHub releases](https://github.com/rzh-98/Hostlane/releases/latest); upgrades are manual. The commands below are for building from source.
 
 **Requirements:** Rust 1.89+, Node.js 22.12+ and npm 10+.
 
@@ -296,22 +296,23 @@ The desktop app's Integrations page has the same snippet with a copy button.
 
 ## Roadmap
 
-| Milestone                  | Scope                                                                                                                                                                                  | Status  |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| **M0** Skeleton            | Rust workspace, daemon, local socket JSON-RPC, CLI, `~/.ssh/config` import, desktop shell                                                                                              | ✅ Done |
-| **M1** Connect & exec      | `russh` connection pool, host fingerprint checks, `exec`, session monitor, audit log                                                                                                   | ✅ Done |
-| **M2** Files               | `read_file`, `list_dir`, `search`, `apply_patch`, `write_file`                                                                                                                         | ✅ Done |
-| **M3** Ports               | Port discovery, process mapping, HTTP probing, port notes, free-port lookup                                                                                                            | ✅ Done |
-| **M4** Tunnels             | Local forwarding, saved tunnels, auto-reconnect, conflict detection, temporary agent tunnels                                                                                           | ✅ Done |
-| **M5** Policy              | Risk levels, rules, blocking approvals, global stop                                                                                                                                    | ✅ Done |
-| **M6** MCP & distribution  | `hostlane mcp`, Integrations page, user-level service registration, bundled binary                                                                                                     | ✅ Done |
-| **M7** Engineering         | GitHub Actions (checks, end-to-end tests against a local sshd on Linux and macOS, Windows build check, tagged releases of installers and CLI archives), measured performance, app icon | ✅ Done |
-| **M8** Finish P0           | Add hosts by hand (H1); passwords and passphrase-protected keys stored in the system keychain (H2); service actions: logs, restart, stop, kill (P7); fresh screenshots                 | ✅ Done |
-| **M9** Long jobs & clients | Background jobs on `tmux` / `nohup` (E2), per-agent client names and tokens (A5), untrusted-data marking (S6)                                                                          | ✅ Done |
-| **M10** Web ops            | Exposure analysis (P5), Nginx/Caddy domain mapping (P6), health checks (P9), remote forwarding (T2), host profile (H6), host notes export (H7)                                         | ✅ Done |
-| **M11** Audit & rollback   | Per-task rollback (F5), timeline (L3), export (L4), session replay (M3)                                                                                                                | ✅ Done |
-| **M12** Windows            | User-only named pipe, OpenSSH agent, login task, background launch and PATH setup                                                                                                      | ✅ Done |
-| **V1.0** Release           | Code signing and notarization, auto-update, Homebrew                                                                                                                                   | Planned |
+| Milestone                  | Scope                                                                                                                                                                                  | Status      |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| **M0** Skeleton            | Rust workspace, daemon, local socket JSON-RPC, CLI, `~/.ssh/config` import, desktop shell                                                                                              | ✅ Done     |
+| **M1** Connect & exec      | `russh` connection pool, host fingerprint checks, `exec`, session monitor, audit log                                                                                                   | ✅ Done     |
+| **M2** Files               | `read_file`, `list_dir`, `search`, `apply_patch`, `write_file`                                                                                                                         | ✅ Done     |
+| **M3** Ports               | Port discovery, process mapping, HTTP probing, port notes, free-port lookup                                                                                                            | ✅ Done     |
+| **M4** Tunnels             | Local forwarding, saved tunnels, auto-reconnect, conflict detection, temporary agent tunnels                                                                                           | ✅ Done     |
+| **M5** Policy              | Risk levels, rules, blocking approvals, global stop                                                                                                                                    | ✅ Done     |
+| **M6** MCP & distribution  | `hostlane mcp`, Integrations page, user-level service registration, bundled binary                                                                                                     | ✅ Done     |
+| **M7** Engineering         | GitHub Actions (checks, end-to-end tests against a local sshd on Linux and macOS, Windows build check, tagged releases of installers and CLI archives), measured performance, app icon | ✅ Done     |
+| **M8** Finish P0           | Add hosts by hand (H1); passwords and passphrase-protected keys stored in the system keychain (H2); service actions: logs, restart, stop, kill (P7); fresh screenshots                 | ✅ Done     |
+| **M9** Long jobs & clients | Background jobs on `tmux` / `nohup` (E2), per-agent client names and tokens (A5), untrusted-data marking (S6)                                                                          | ✅ Done     |
+| **M10** Web ops            | Exposure analysis (P5), Nginx/Caddy domain mapping (P6), health checks (P9), remote forwarding (T2), host profile (H6), host notes export (H7)                                         | ✅ Done     |
+| **M11** Audit & rollback   | Per-task rollback (F5), timeline (L3), export (L4), session replay (M3)                                                                                                                | ✅ Done     |
+| **M12** Windows            | User-only named pipe, OpenSSH agent, login task, background launch and PATH setup                                                                                                      | ✅ Done     |
+| **V1.0** Release           | Cross-platform stable 1.0.0 release with CLI and desktop installers                                                                                                                    | ✅ Released |
+| **Post-1.0** Distribution  | Code signing and notarization, auto-update, Homebrew                                                                                                                                   | Planned     |
 
 The order after M10 depends on which scenarios come up most in real use. The full requirement list, with IDs and priorities, is in [docs/requirements.md](docs/requirements.md) (Chinese).
 
