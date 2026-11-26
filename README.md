@@ -191,6 +191,8 @@ Environment values supplied via `--env` are masked in new audit records and when
 
 ### Windows
 
+Look for the Hostlane icon in the taskbar notification area (or under the `^` next to the clock). It stays there after you close the desktop app and disappears when the local daemon stops. It indicates daemon status, not an active SSH connection. Click it to reopen or focus the bundled desktop app; with the standalone CLI, the icon is status-only.
+
 Run `hostlane.exe daemon start` for a background daemon; `daemon install` registers a least-privilege login task for the current user. The desktop app bundles the binary. Under Integrations, add it to your user PATH, then sign out and back in. OpenSSH agent keys use the Windows `ssh-agent` service if enabled. This supports Windows as the **local client**; remote web operations still expect Unix server tools.
 
 ### Environment variables

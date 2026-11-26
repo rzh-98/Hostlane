@@ -228,6 +228,9 @@ pub async fn serve(daemon: Arc<Daemon>) -> Result<(), ServeError> {
     let path = daemon.socket_path.clone();
     let mut listen = crate::windows_pipe::listener(&path, true)?;
     daemon.start().await;
+    let tray = crate::windows_tray::Tray::start().inspect_err(|err| {
+        tracing::warn!(%err, "could not start Windows notification icon");
+    });
     let result = loop {
         tokio::select! {
             accepted=listen.connect()=>{
@@ -241,6 +244,9 @@ pub async fn serve(daemon: Arc<Daemon>) -> Result<(), ServeError> {
         }
     };
     daemon.close().await;
+    if let Ok(tray) = tray {
+        tray.stop().await;
+    }
     result
 }
 

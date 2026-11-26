@@ -195,6 +195,8 @@ hostlane web forwards
 
 ### Windows
 
+打开桌面端后，任务栏右侧通知区域会出现 Hostlane 图标。关闭窗口后，桌面端退出，但图标会保留，表示本机守护进程仍在运行（不代表 SSH 已连接）。单击图标可重新打开或聚焦桌面端；如果看不到，请展开时钟旁的 `^`。仅安装独立 CLI 时，图标只显示状态。停止守护进程后，图标消失。
+
 运行 `hostlane.exe daemon start` 启动后台守护进程；`daemon install` 注册当前用户登录时运行的最低权限任务。桌面端内置二进制，接入页可以将它加入用户 PATH，重新登录后生效。启用 Windows OpenSSH 的 `ssh-agent` 服务后即可使用其中的密钥。这里支持的是 **Windows 本机客户端**；远程 Web 运维仍面向 Unix 服务器。
 
 ### 环境变量

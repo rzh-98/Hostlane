@@ -109,6 +109,9 @@ jobs:
       - name: Verify live pipe ownership and access rules
         run: cargo test -p hostlane-core windows_pipe::tests
 
+      - name: Verify daemon notification area lifecycle
+        run: cargo test -p hostlane-core windows_tray::tests
+
       - name: Sign with a disposable Windows OpenSSH agent key
         shell: pwsh
         run: |

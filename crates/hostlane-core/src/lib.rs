@@ -9,6 +9,8 @@ pub mod server;
 pub mod ssh_config;
 #[cfg(windows)]
 pub mod windows_pipe;
+#[cfg(windows)]
+mod windows_tray;
 
 mod catalog;
 mod clients;
