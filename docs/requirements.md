@@ -203,4 +203,4 @@ agent 侧对应的工具包括：`ports_list`、`port_inspect`、`port_check`、
 | **M12 Windows**（已完成） | 用户专属命名管道和 ACL、Windows OpenSSH agent、任务计划程序登录启动、后台启动、用户 PATH 设置 |
 | **V1.0 发布** | 跨平台稳定版、CLI 和桌面安装包（v1.0.0；安装包未签名） |
 
-v1.0.0 通过三平台 CI 和打包冒烟测试。签名与公证、从旧版升级、自动更新及 Homebrew 分发留待后续版本。
+v1.0.0 通过三平台 CI 和打包冒烟测试；v1.0.1 增加可选的后台 SSH 可达性检测。签名与公证、从旧版升级、自动更新及 Homebrew 分发留待后续版本。

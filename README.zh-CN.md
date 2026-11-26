@@ -6,7 +6,7 @@
   <p>不内置 LLM；服务器端不需要安装任何组件，只要有 <code>sshd</code>。</p>
   <p>
     <a href="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml/badge.svg" /></a>
-    <img alt="Status" src="https://img.shields.io/badge/status-v1.0.0-blue" />
+    <img alt="Status" src="https://img.shields.io/badge/status-v1.0.1-blue" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -23,7 +23,7 @@
 </div>
 
 > [!WARNING]
-> **Hostlane 1.0.0 已发布。** 本版包含 [Web 运维](#web-运维)、任务回滚和 Windows 本机运行时。安装包尚未签名，macOS 版本未经公证；请仅从官方 GitHub Release 下载，并按系统提示手动安装。升级需要手动完成，暂不支持自动更新或通过 Homebrew 安装。
+> **Hostlane 1.0.1 新增后台 SSH 可达性检测。** 安装包尚未签名，macOS 版本未经公证；请仅从官方 GitHub Release 下载。升级需要手动完成，暂不支持自动更新或通过 Homebrew 安装。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -74,7 +74,7 @@ Electron UI ──IPC──► 主进程 ──本地 socket──► hostlane d
 
 ## 快速开始
 
-在 v1.0.0 之后的构建中，打开 **主机 → 状态 → 后台检测 SSH 可达性**，即可只为所选主机开启每 5 分钟一次的后台检测。默认关闭；检测不会自动登录。界面分别显示 SSH 连接状态、最近检测结果及时间，agent 也可以通过 MCP `hosts` 读取。
+在 v1.0.1 中，打开 **主机 → 状态 → 后台检测 SSH 可达性**，即可只为所选主机开启每 5 分钟一次的后台检测。默认关闭；检测不会自动登录。界面分别显示 SSH 连接状态、最近检测结果及时间，agent 也可以通过 MCP `hosts` 读取。
 
 **已有桌面构建，不用打开终端。** 打开 Hostlane，守护进程会自动启动：
 
@@ -318,6 +318,7 @@ claude mcp add --scope user hostlane -- hostlane mcp
 | **M11** 审计与回滚  | 按任务回滚（F5）、时间线（L3）、导出（L4）、会话回放（M3）                                                                                 | ✅ 已完成 |
 | **M12** Windows     | 用户专属命名管道、Windows OpenSSH agent、任务计划程序登录启动、后台启动、PATH 设置                                                         | ✅ 已完成 |
 | **V1.0** 发布       | 跨平台稳定版，包含 CLI 和桌面安装包                                                                                                        | ✅ 已发布 |
+| **V1.0.1** 维护版   | 可选的后台 SSH 可达性检测                                                                                                                  | ✅ 已发布 |
 | **V1.0 后续分发**   | 代码签名和公证、自动更新、Homebrew                                                                                                         | 计划中    |
 
 M10 之后的顺序按实际使用中最常用的场景决定。完整需求（含编号和优先级）见 [docs/requirements.md](docs/requirements.md)。

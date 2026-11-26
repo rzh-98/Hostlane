@@ -6,7 +6,7 @@
   <p>No built-in LLM. Nothing to install on the server: <code>sshd</code> is enough.</p>
   <p>
     <a href="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml/badge.svg" /></a>
-    <img alt="Status" src="https://img.shields.io/badge/status-v1.0.0-blue" />
+    <img alt="Status" src="https://img.shields.io/badge/status-v1.0.1-blue" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -23,7 +23,7 @@
 </div>
 
 > [!WARNING]
-> **Hostlane 1.0.0 is released.** It includes [web operations](#web-operations), task rollback and the Windows runtime. Installers are unsigned and macOS builds are not notarized; download only from the official GitHub release and follow the platform's manual install prompts. Upgrades are manual; automatic updates and Homebrew distribution are not available yet.
+> **Hostlane 1.0.1 adds background SSH reachability checks.** Installers are unsigned and macOS builds are not notarized; download only from the official GitHub release. Upgrades are manual; automatic updates and Homebrew distribution are not available yet.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -74,7 +74,7 @@ Details: [architecture and protocol](docs/architecture.md) (Chinese).
 
 ## Quick start
 
-On builds after v1.0.0, **Hosts → Status → 后台检测 SSH 可达性** enables a five-minute background check for just that host. It stays off by default and never signs in to probe. The last result and its age are separate from the SSH session state; your agent can read both with the MCP `hosts` tool.
+In v1.0.1, **Hosts → Status → 后台检测 SSH 可达性** enables a five-minute background check for just that host. It stays off by default and never signs in to probe. The last result and its age are separate from the SSH session state; your agent can read both with the MCP `hosts` tool.
 
 With a desktop build, no terminal is needed: open **Hosts → Add host**, browse for a private key or save a password using the system dialog, then connect and check the fingerprint. Under **Integrations → MCP**, select your client and write its configuration. Restart the client; no PATH edits are needed. In **Audit**, export filtered records or select a task timeline to preview a rollback. The session monitor stays read-only.
 
@@ -314,6 +314,7 @@ The desktop app's Integrations page has the same snippet with a copy button.
 | **M11** Audit & rollback   | Per-task rollback (F5), timeline (L3), export (L4), session replay (M3)                                                                                                                | ✅ Done     |
 | **M12** Windows            | User-only named pipe, OpenSSH agent, login task, background launch and PATH setup                                                                                                      | ✅ Done     |
 | **V1.0** Release           | Cross-platform stable 1.0.0 release with CLI and desktop installers                                                                                                                    | ✅ Released |
+| **V1.0.1** Maintenance     | Optional background SSH reachability checks                                                                                                                                            | ✅ Released |
 | **Post-1.0** Distribution  | Code signing and notarization, auto-update, Homebrew                                                                                                                                   | Planned     |
 
 The order after M10 depends on which scenarios come up most in real use. The full requirement list, with IDs and priorities, is in [docs/requirements.md](docs/requirements.md) (Chinese).
