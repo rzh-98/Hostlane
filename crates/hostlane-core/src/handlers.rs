@@ -30,6 +30,7 @@ use crate::util::{now_ms, sha256_hex};
 const POLICY_CHANGES: &[&str] = &[
     method::HOSTS_NOTE,
     method::HEALTH_SET,
+    method::REACHABILITY_SET,
     method::REVERSE_CLOSE,
     method::HOSTS_LABEL,
     method::HOSTS_ADD,
@@ -233,6 +234,7 @@ async fn run(
                 hosts,
                 warnings: loaded.warnings,
                 manual,
+                reachability: daemon.reachability.list().await,
             })
         }
         method::HOSTS_CONNECT => {
@@ -327,6 +329,16 @@ async fn run(
             to_value(crate::web::report(daemon, parse::<HostParams>(params)?.host).await?)
         }
         method::HEALTH_LIST => to_value(daemon.health.list().await),
+        method::REACHABILITY_LIST => to_value(daemon.reachability.list().await),
+        method::REACHABILITY_SET => {
+            require_person(client, "configure SSH reachability monitoring")?;
+            let params: hostlane_protocol::HostReachabilityParams = parse(params)?;
+            daemon
+                .reachability
+                .set(daemon, params.host, params.enabled)
+                .await?;
+            Ok(Value::Null)
+        }
         method::HEALTH_SET => {
             require_person(client, "configure health monitoring")?;
             to_value(daemon.health.set(daemon, parse(params)?).await?)

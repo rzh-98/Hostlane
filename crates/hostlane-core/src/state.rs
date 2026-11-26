@@ -66,6 +66,8 @@ pub struct Daemon {
     pub(crate) clients: Clients,
     pub(crate) shutdown: Notify,
     pub(crate) health: crate::health::Health,
+    pub(crate) reachability: crate::reachability::Reachability,
+    reachability_task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) reverse: crate::reverse::Reverse,
     monitor: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -137,6 +139,8 @@ impl Daemon {
             events,
             shutdown: Notify::new(),
             health: Default::default(),
+            reachability: Default::default(),
+            reachability_task: Default::default(),
             reverse: Default::default(),
             monitor: Default::default(),
         })
@@ -144,6 +148,11 @@ impl Daemon {
 
     /// Recovers state left by a previous run and starts background maintenance.
     pub async fn start(self: &Arc<Self>) {
+        if let Err(err) = self.reachability.load(self).await {
+            tracing::warn!(%err, "cannot load SSH reachability monitors");
+        }
+        *self.reachability_task.lock().unwrap() =
+            Some(tokio::spawn(crate::reachability::monitor(self.clone())));
         if let Err(err) = self.health.load(self).await {
             tracing::warn!(%err,"cannot load health checks");
         }
@@ -200,6 +209,9 @@ impl Daemon {
 
     /// Closes SSH connections before the process exits.
     pub async fn close(&self) {
+        if let Some(task) = self.reachability_task.lock().unwrap().take() {
+            task.abort();
+        }
         if let Some(task) = self.monitor.lock().unwrap().take() {
             task.abort();
         }

@@ -113,7 +113,9 @@ fn specs() -> Vec<Spec> {
             name: "hosts",
             method: method::HOSTS_LIST,
             description: "List the servers Hostlane knows (from ~/.ssh/config) with their \
-                labels (env, tags) and current connection state.",
+                labels, connection state and cached SSH reachability for opted-in hosts. \
+                checked_at is the sample time in Unix milliseconds (0 means pending); \
+                samples older than five minutes may be stale. This tool does not probe or login.",
             properties: json!({}),
             required: &[],
             read_only: true,
@@ -845,6 +847,7 @@ mod tests {
                     method::POLICY_RULES_ADD,
                     method::POLICY_RULES_DELETE,
                     method::HOSTS_TRUST,
+                    method::REACHABILITY_SET,
                     method::HOSTS_LABEL,
                     method::HOSTS_ADD,
                     method::HOSTS_UPDATE,

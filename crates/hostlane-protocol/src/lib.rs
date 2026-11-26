@@ -44,7 +44,8 @@ pub use files::{
 };
 pub use hosts::{
     AuthFailure, Connection, ConnectionState, ConnectionsList, Host, HostAddParams, HostEnv,
-    HostKeyInfo, HostParams, HostRemoved, HostSource, HostsList, TrustParams, TrustResult,
+    HostKeyInfo, HostParams, HostReachability, HostReachabilityParams, HostRemoved, HostSource,
+    HostsList, ReachabilityStatus, TrustParams, TrustResult,
 };
 pub use jobs::{
     Job, JobBackend, JobLogs, JobLogsParams, JobParams, JobStartParams, JobState, JobStatusParams,
@@ -103,6 +104,8 @@ pub mod method {
     pub const SECRETS_SET: &str = "secrets.set";
     pub const SECRETS_DELETE: &str = "secrets.delete";
     pub const CONNECTIONS_LIST: &str = "connections.list";
+    pub const REACHABILITY_LIST: &str = "reachability.list";
+    pub const REACHABILITY_SET: &str = "reachability.set";
     pub const EXEC_RUN: &str = "exec.run";
     pub const EXEC_LIST: &str = "exec.list";
     pub const OUTPUT_READ: &str = "output.read";
@@ -224,6 +227,8 @@ pub mod method {
         SECRETS_SET,
         SECRETS_DELETE,
         CONNECTIONS_LIST,
+        REACHABILITY_LIST,
+        REACHABILITY_SET,
         EXEC_RUN,
         EXEC_LIST,
         OUTPUT_READ,

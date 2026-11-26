@@ -74,6 +74,8 @@ Details: [architecture and protocol](docs/architecture.md) (Chinese).
 
 ## Quick start
 
+On builds after v1.0.0, **Hosts → Status → 后台检测 SSH 可达性** enables a five-minute background check for just that host. It stays off by default and never signs in to probe. The last result and its age are separate from the SSH session state; your agent can read both with the MCP `hosts` tool.
+
 With a desktop build, no terminal is needed: open **Hosts → Add host**, browse for a private key or save a password using the system dialog, then connect and check the fingerprint. Under **Integrations → MCP**, select your client and write its configuration. Restart the client; no PATH edits are needed. In **Audit**, export filtered records or select a task timeline to preview a rollback. The session monitor stays read-only.
 
 Installers are unsigned and macOS builds are not notarized. Download the desktop installers and CLI archives from the [official GitHub releases](https://github.com/rzh-98/Hostlane/releases/latest); upgrades are manual. The commands below are for building from source.

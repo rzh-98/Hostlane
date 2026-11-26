@@ -47,6 +47,7 @@ import type { SecretChanged } from '@shared/protocol/SecretChanged'
 import type { SecretsList } from '@shared/protocol/SecretsList'
 import type { TrustResult } from '@shared/protocol/TrustResult'
 import { HostDialog } from './HostDialog'
+import { ReachabilityRows } from './ReachabilityRows'
 import { WebOperations } from './WebOperations'
 import { LabelDialog } from './LabelDialog'
 import { SecretDialog, type SecretTarget } from './SecretDialog'
@@ -642,6 +643,7 @@ function HostDetail({
         {connection?.last_used_at && (
           <Row label="最近使用" value={formatAgo(connection.last_used_at)} />
         )}
+        <ReachabilityRows key={host.id} host={host} />
         {hostKey && (
           <Row
             label="主机指纹"

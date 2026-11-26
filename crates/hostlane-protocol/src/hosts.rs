@@ -54,6 +54,8 @@ pub struct HostsList {
     /// `hosts.update` (for editing them).
     #[serde(default)]
     pub manual: Vec<HostAddParams>,
+    #[serde(default)]
+    pub reachability: Vec<HostReachability>,
 }
 
 /// Params of `hosts.connect` and `hosts.disconnect`.
@@ -124,6 +126,36 @@ pub struct Connection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub error: Option<crate::RpcError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HostReachability {
+    pub host: String,
+    pub status: ReachabilityStatus,
+    #[ts(type = "number")]
+    pub checked_at: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ReachabilityStatus {
+    Pending,
+    SshBanner,
+    SessionAlive,
+    TimedOut,
+    ConnectFailed,
+    NoSshBanner,
+    JumpDisconnected,
+    HostUnavailable,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HostReachabilityParams {
+    pub host: String,
+    pub enabled: bool,
 }
 
 /// Result of `connections.list`: hosts that have been used since the daemon started.

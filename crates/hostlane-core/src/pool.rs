@@ -7,9 +7,11 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use hostlane_protocol::ReachabilityStatus;
 use hostlane_protocol::{Connection, ConnectionState, ErrorKind, Event, HostKeyInfo, RpcError};
 use russh::client::Msg;
 use russh::{Channel, Disconnect};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::events::EventBus;
@@ -25,6 +27,7 @@ const PING_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_JUMPS: usize = 8;
 
 pub struct Conn {
+    last_alive: AtomicU64,
     pub routes: crate::reverse::Routes,
     pub handle: SshHandle,
     channels: Arc<Semaphore>,
@@ -157,6 +160,60 @@ impl Pool {
         &self.locations
     }
 
+    async fn existing(&self, id: &str) -> Option<Arc<Conn>> {
+        let slot = self
+            .slots
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .get(id)
+            .cloned()?;
+        slot.conn
+            .lock()
+            .await
+            .clone()
+            .filter(|conn| !conn.handle.is_closed())
+    }
+
+    pub async fn sample_reachability(
+        &self,
+        entry: &Entry,
+        loaded: &Loaded,
+    ) -> (ReachabilityStatus, u64) {
+        if let Some(conn) = self.existing(&entry.host.id).await {
+            return (
+                ReachabilityStatus::SessionAlive,
+                conn.last_alive.load(Ordering::Relaxed),
+            );
+        }
+        let status = if let Some(spec) = &entry.host.proxy_jump {
+            let hop = jump_entry(spec, loaded);
+            match self.existing(&hop.host.id).await {
+                Some(via) => match via
+                    .handle
+                    .channel_open_direct_tcpip(
+                        entry.host.hostname.clone(),
+                        entry.host.port.into(),
+                        "127.0.0.1",
+                        0,
+                    )
+                    .await
+                {
+                    Ok(channel) => crate::reachability::read_banner(channel.into_stream()).await,
+                    Err(_) => ReachabilityStatus::ConnectFailed,
+                },
+                None => ReachabilityStatus::JumpDisconnected,
+            }
+        } else {
+            match tokio::net::TcpStream::connect((entry.host.hostname.as_str(), entry.host.port))
+                .await
+            {
+                Ok(stream) => crate::reachability::read_banner(stream).await,
+                Err(_) => ReachabilityStatus::ConnectFailed,
+            }
+        };
+        (status, now_ms())
+    }
+
     fn slot(&self, host: &str) -> Arc<Slot> {
         self.slots
             .lock()
@@ -211,6 +268,7 @@ impl Pool {
             match result {
                 Ok((established, via)) => {
                     let conn = Arc::new(Conn {
+                        last_alive: AtomicU64::new(now_ms()),
                         routes: established.routes,
                         handle: established.handle,
                         channels: Arc::new(Semaphore::new(MAX_CHANNELS)),
@@ -477,6 +535,7 @@ impl Pool {
         let started = std::time::Instant::now();
         match tokio::time::timeout(PING_TIMEOUT, conn.handle.send_ping()).await {
             Ok(Ok(())) => {
+                conn.last_alive.store(now_ms(), Ordering::Relaxed);
                 let latency = started.elapsed().as_millis() as u64;
                 self.update(slot, |info| info.latency_ms = Some(latency));
             }

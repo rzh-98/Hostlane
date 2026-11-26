@@ -103,6 +103,14 @@ pub enum ServiceAction {
 
 #[derive(Subcommand)]
 pub enum HostCommand {
+    /// List monitored hosts and their most recent SSH reachability samples (no network probe).
+    Reachability,
+    /// Enable or disable five-minute SSH reachability monitoring for a host.
+    Monitor {
+        id: String,
+        #[arg(value_parser = ["on", "off"])]
+        mode: String,
+    },
     /// Add a host without editing ~/.ssh/config.
     Add {
         /// Name used in other commands; letters, digits, `.`, `_` and `-`.
@@ -355,6 +363,43 @@ async fn command_result(
 
 async fn host(client: &Client, command: HostCommand, json: bool) -> Result<()> {
     match command {
+        HostCommand::Reachability => {
+            let samples: Vec<hostlane_protocol::HostReachability> = client
+                .call_as(method::REACHABILITY_LIST, Value::Null)
+                .await?;
+            if json {
+                print_json(&samples);
+            } else if samples.is_empty() {
+                println!("No hosts monitored.");
+            } else {
+                for sample in samples {
+                    let status = serde_json::to_value(sample.status)?;
+                    println!(
+                        "{}: {} ({})",
+                        sample.host,
+                        status.as_str().unwrap_or_default(),
+                        if sample.checked_at == 0 {
+                            "not checked yet".into()
+                        } else {
+                            ago(sample.checked_at)
+                        }
+                    );
+                }
+            }
+        }
+        HostCommand::Monitor { id, mode } => {
+            let result = client
+                .call(
+                    method::REACHABILITY_SET,
+                    json!({"host": id, "enabled": mode == "on"}),
+                )
+                .await?;
+            if json {
+                print_json(&result);
+            } else {
+                println!("SSH reachability monitoring for {id}: {mode}");
+            }
+        }
         HostCommand::Add {
             id,
             hostname,

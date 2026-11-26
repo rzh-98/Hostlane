@@ -121,6 +121,7 @@ pub(crate) async fn update(daemon: &Daemon, params: HostAddParams) -> Result<Hos
     require_manual(&find(daemon, &host.id).await?)?;
     let saved = save(daemon, host).await?;
     daemon.pool.disconnect(&saved.id).await;
+    daemon.reachability.invalidate(&saved.id).await;
     Ok(saved)
 }
 
@@ -141,6 +142,7 @@ pub(crate) async fn remove(daemon: &Daemon, id: &str) -> Result<HostRemoved, Rpc
         }
     }
     daemon.pool.disconnect(id).await;
+    daemon.reachability.set(daemon, id.into(), false).await?;
     for check in daemon
         .health
         .list()

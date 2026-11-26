@@ -71,6 +71,8 @@ export const RENDERER_METHODS = [
   'hosts.note',
   'web.report',
   'health.list',
+  'reachability.list',
+  'reachability.set',
   'health.set',
   'reverse.open',
   'reverse.close',

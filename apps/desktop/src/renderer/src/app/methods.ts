@@ -44,6 +44,7 @@ export const methodLabels: Record<string, string> = {
   'hosts.note': '保存主机备注',
   'web.report': '分析端口与域名',
   'health.set': '配置健康检查',
+  'reachability.set': '配置 SSH 可达性检测',
   'reverse.open': '开启反向转发',
   'reverse.close': '关闭反向转发',
   'approvals.resolve': '审批',

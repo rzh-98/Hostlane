@@ -90,6 +90,17 @@ def expect(condition, message):
         fail(message)
 
 
+def await_reachability(host, expected):
+    deadline = time.monotonic() + 12
+    rows = []
+    while time.monotonic() < deadline:
+        rows = hl("host", "reachability")
+        if any(row["host"] == host and row["status"] == expected and row["checked_at"] > 0 for row in rows):
+            return
+        time.sleep(0.1)
+    fail(f"expected {host}: {expected}, got {rows}")
+
+
 def free_port():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -181,6 +192,29 @@ def main():
     expect(test.get("env") == "dev" and "e2e" in test.get("tags", []), f"labels: {test}")
     step("hosts lists ssh_config entries with labels")
 
+    expect(hl("hosts")["reachability"] == [], "monitoring must default to off")
+    enable = json.dumps({"host": "test", "enabled": True})
+    disable = json.dumps({"host": "test", "enabled": False})
+    error = hl_error("call", "reachability.set", enable, env={"HOSTLANE_CLIENT": "agent"})
+    expect(error["kind"] == "POLICY_DENIED", f"agent must not enable monitoring: {error}")
+    hl("host", "monitor", "test", "on")
+    await_reachability("test", "ssh_banner")
+    expect(hl("connections")["connections"] == [], "banner probe established a pooled session")
+    hl("daemon", "stop")
+    hl("daemon", "start")
+    await_reachability("test", "ssh_banner")
+    _, _, cached = mcp_session([("hosts", {})])
+    expect(cached[0]["structuredContent"]["reachability"][0]["status"] == "ssh_banner", "MCP hosts missing sample")
+    hl("call", "reachability.set", disable)
+    expect(hl("hosts")["reachability"] == [], "disabled monitor still listed")
+    hl("host", "add", "via-test", "127.0.0.1", "--port", str(BED.port), "--jump", "test")
+    hl("call", "reachability.set", json.dumps({"host": "via-test", "enabled": True}))
+    await_reachability("via-test", "jump_disconnected")
+    expect(hl("connections")["connections"] == [], "monitor tried to log in to the jump host")
+    hl("host", "remove", "via-test")
+    expect(hl("hosts")["reachability"] == [], "removed host still monitored")
+    step("SSH reachability is opt-in, survives restart and does not log in")
+
     error = hl_error("exec", "test", "--", "true")
     expect(error["kind"] == "HOST_KEY_UNKNOWN", f"unknown key: {error}")
     step("unknown host key is refused")
@@ -190,6 +224,11 @@ def main():
     expect("error" in result, f"wrong fingerprint accepted: {result}")
     approved("trust", "test", "--fingerprint", fingerprint)
     step("trust needs approval and the matching fingerprint")
+
+    hl("call", "reachability.set", enable)
+    await_reachability("test", "session_alive")
+    hl("call", "reachability.set", disable)
+    step("SSH reachability reuses the established session")
 
     result = hl("exec", "test", "--", "echo hello; echo oops >&2; exit 3")
     expect(result["stdout"] == "hello\n", f"stdout: {result}")

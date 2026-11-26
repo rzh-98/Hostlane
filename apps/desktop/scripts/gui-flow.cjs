@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict')
 const childProcess = require('node:child_process')
 const fs = require('node:fs')
+const net = require('node:net')
 const os = require('node:os')
 const path = require('node:path')
 const { app, BrowserWindow, dialog } = require('electron')
@@ -95,6 +96,41 @@ async function test() {
     await sleep(150)
   }
   assert.ok((await rpc('hosts.list', {})).result.hosts.some((host) => host.id === 'fixture'))
+  const banner = net.createServer((socket) => socket.end('SSH-2.0-fixture\r\n'))
+  await new Promise((resolve) => banner.listen(0, '127.0.0.1', resolve))
+  try {
+    fs.writeFileSync(
+      process.env.HOSTLANE_SSH_CONFIG,
+      `Host fixture\n  HostName 127.0.0.1\n  Port ${banner.address().port}\n`
+    )
+    const toggle = `document.querySelector('button[role="switch"]')`
+    for (
+      let attempt = 0;
+      attempt < 50 && !(await evaluate(`${toggle} && !${toggle}.disabled`));
+      attempt++
+    )
+      await sleep(100)
+    assert.equal(await evaluate(`${toggle}.getAttribute('aria-checked')`), 'false')
+    await evaluate(`${toggle}.click()`)
+    for (
+      let attempt = 0;
+      attempt < 100 && !(await evaluate(`document.body.innerText.includes('SSH 可达（未登录）')`));
+      attempt++
+    )
+      await sleep(100)
+    assert.ok(await evaluate(`document.body.innerText.includes('SSH 可达（未登录）')`))
+    assert.deepEqual((await rpc('connections.list', {})).result.connections, [])
+    await evaluate(`${toggle}.click()`)
+    for (
+      let attempt = 0;
+      attempt < 50 && (await rpc('reachability.list', {})).result.length;
+      attempt++
+    )
+      await sleep(100)
+    assert.deepEqual((await rpc('reachability.list', {})).result, [])
+  } finally {
+    banner.close()
+  }
   assert.equal((await rpc('secrets.set', {})).error.kind, 'METHOD_NOT_FOUND')
   assert.equal(
     await evaluate('window.desktop.hostlane.chooseKey()'),
