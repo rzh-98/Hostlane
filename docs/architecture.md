@@ -81,6 +81,7 @@ Electron 主进程 ◄─IPC─ 渲染进程（沙箱）────────
 - `hostlane daemon start` 会以独立进程组在后台启动 `hostlane daemon run`，日志写入 `<数据目录>/daemon.log`，等到 socket 能响应后才返回。
 - 桌面端启动时，如果守护进程没有运行，会调用 `hostlane daemon start`。关闭桌面端不会停止守护进程。
 - Windows 通知区域图标由守护进程的独立 Win32 消息线程持有，不依赖 Electron。Explorer 重启后重新注册；没有可用通知区域时仍提供 RPC 服务。单击图标只启动同一安装目录的桌面端，不从 PATH 查找程序。
+- macOS 在独立的轻量级 CLI 子进程主线程运行 AppKit 菜单栏，守护进程持有的管道关闭时自动退出，不占 Dock，也不需要 Electron 常驻。Linux 在用户 D-Bus 上发布 StatusNotifierItem；桌面托盘晚于守护进程启动或重启时会重新注册。两者都只在桌面安装包中提供重新打开窗口的入口。
 - `hostlane daemon install` 把守护进程注册为用户级服务：macOS 写入 `~/Library/LaunchAgents/com.hostlane.daemon.plist` 并 `launchctl bootstrap`（`RunAtLoad`，`KeepAlive` 只在非 0 退出时重启）；Linux 写入 `~/.config/systemd/user/hostlane.service` 并 `enable` + `restart`（`Restart=on-failure`）。服务文件记录当前二进制的绝对路径和当时设置的 `HOSTLANE_SOCKET`、`HOSTLANE_DATA_DIR`、`HOSTLANE_SSH_CONFIG`、`HOSTLANE_NOTIFY`。正在运行的守护进程会先被停止，再由服务接管。`--print` 只输出服务文件。
 - 服务已安装时，`hostlane daemon start`（以及桌面端和 MCP 的自动拉起）改为让服务管理器启动（`launchctl kickstart` / `systemctl --user start`），不会在服务之外再起一个守护进程。`hostlane daemon stop` 正常退出（退出码 0），服务不会把它重新拉起。
 - `hostlane daemon uninstall` 停止服务（守护进程随之退出）并删除服务文件；`hostlane daemon service` 查看是否安装以及服务运行的二进制。

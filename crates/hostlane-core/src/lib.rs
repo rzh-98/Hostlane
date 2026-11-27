@@ -3,6 +3,8 @@
 
 pub mod client;
 pub mod known_hosts;
+#[cfg(target_os = "linux")]
+mod linux_tray;
 pub mod paths;
 pub mod secrets;
 pub mod server;

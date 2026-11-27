@@ -99,15 +99,22 @@ function registerIpc(): void {
   })
 }
 
+function reopenWindow(): void {
+  if (!app.isReady()) return
+  const [win] = BrowserWindow.getAllWindows()
+  if (!win) {
+    createMainWindow()
+    return
+  }
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
-    const [win] = BrowserWindow.getAllWindows()
-    if (!win) return
-    if (win.isMinimized()) win.restore()
-    win.focus()
-  })
+  app.on('second-instance', reopenWindow)
 
   app.whenReady().then(() => {
     registerIpc()
@@ -121,9 +128,7 @@ if (!app.requestSingleInstanceLock()) {
     })
     app.on('will-quit', unsubscribe)
 
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
-    })
+    app.on('activate', reopenWindow)
   })
 
   app.on('window-all-closed', () => {

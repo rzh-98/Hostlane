@@ -229,6 +229,15 @@ enum DaemonCommand {
 }
 
 fn main() -> ExitCode {
+    #[cfg(target_os = "macos")]
+    if std::env::args_os().skip(1).eq(["--hostlane-menu-bar"]) {
+        unsafe extern "C" {
+            fn hostlane_menu_bar(icon: *const u8, length: usize);
+        }
+        const ICON: &[u8] = include_bytes!("../../../docs/icon.png");
+        unsafe { hostlane_menu_bar(ICON.as_ptr(), ICON.len()) };
+        return ExitCode::SUCCESS;
+    }
     let cli = Cli::parse();
     let json = cli.json;
     let runtime = tokio::runtime::Builder::new_multi_thread()

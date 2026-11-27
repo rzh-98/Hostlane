@@ -47,6 +47,7 @@ Electron UI ──IPC──► 主进程 ──本地 socket──► hostlane d
 
 - CLI、MCP 和桌面端连接同一个守护进程，共享连接池、隧道和审批队列。
 - 关闭桌面端不影响 agent。需要审批时，守护进程发送系统通知；点击通知后打开桌面端并进入审批页。
+- 有图形会话时，守护进程在 macOS 菜单栏、Windows 通知区域或支持 StatusNotifierItem 的 Linux 托盘中显示图标。图标与守护进程同寿命，不表示 SSH 连接状态；使用桌面安装包时可通过图标重新打开窗口。
 - SSH 私钥、密码和审计数据只保存在本机。凭据不进入渲染进程，也不写入日志。
 
 详细的目录结构和协议约定见 [architecture.md](architecture.md)。

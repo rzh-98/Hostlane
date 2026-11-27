@@ -189,9 +189,15 @@ Set `HOSTLANE_TASK` for a unit of work and `HOSTLANE_SESSION` for a conversation
 
 Environment values supplied via `--env` are masked in new audit records and when exporting older records. This does not erase old database files or exports. Review command text and paths before sharing an export; they may contain secrets entered literally.
 
-### Windows
+### Background icon
 
-Look for the Hostlane icon in the taskbar notification area (or under the `^` next to the clock). It stays there after you close the desktop app and disappears when the local daemon stops. It indicates daemon status, not an active SSH connection. Click it to reopen or focus the bundled desktop app; with the standalone CLI, the icon is status-only.
+The icon means the **local daemon is running**, not that an SSH host is connected. It stays after you quit the desktop app and disappears when the daemon stops. With the standalone CLI, it is status-only.
+
+- **macOS:** Click Hostlane in the menu bar and choose **Open Hostlane**.
+- **Windows:** Click Hostlane in the notification area; look under the `^` next to the clock if it is hidden.
+- **Linux:** Click the system tray icon or choose **Open Hostlane** from its menu. The desktop must support StatusNotifierItem/AppIndicator (on GNOME an extension may be needed). Headless sessions do not need a tray.
+
+### Windows
 
 Run `hostlane.exe daemon start` for a background daemon; `daemon install` registers a least-privilege login task for the current user. The desktop app bundles the binary. Under Integrations, add it to your user PATH, then sign out and back in. OpenSSH agent keys use the Windows `ssh-agent` service if enabled. This supports Windows as the **local client**; remote web operations still expect Unix server tools.
 

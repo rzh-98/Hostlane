@@ -1,6 +1,6 @@
 // Renders build/icon.svg to the PNG icons. Run with `npm run icon` (uses Electron's renderer).
-const { app, BrowserWindow } = require('electron')
-const { readFileSync, writeFileSync } = require('node:fs')
+const { app, BrowserWindow, nativeImage } = require('electron')
+const { mkdirSync, readFileSync, writeFileSync } = require('node:fs')
 const { join } = require('node:path')
 
 const root = join(__dirname, '..')
@@ -12,7 +12,20 @@ const outputs = [
 
 app.disableHardwareAcceleration()
 app.on('window-all-closed', () => {})
+function renderTray() {
+  const image = nativeImage
+    .createFromBuffer(readFileSync(outputs[2].file))
+    .resize({ width: 32, height: 32 })
+  const bitmap = image.toBitmap()
+  if (bitmap.length !== 32 * 32 * 4) throw new Error('Unexpected tray bitmap size')
+  for (let offset = 0; offset < bitmap.length; offset += 4)
+    bitmap.subarray(offset, offset + 4).reverse()
+  const directory = join(root, '..', '..', 'crates', 'hostlane-core', 'assets')
+  mkdirSync(directory, { recursive: true })
+  writeFileSync(join(directory, 'tray-32.argb'), bitmap)
+}
 async function render() {
+  if (process.argv.includes('--tray-only')) return renderTray()
   const svg = readFileSync(join(root, 'build', 'icon.svg'), 'utf8')
   for (const { file, size } of outputs) {
     const win = new BrowserWindow({
@@ -33,6 +46,7 @@ async function render() {
     win.destroy()
     console.log(`${file} (${size}px)`)
   }
+  renderTray()
 }
 
 app

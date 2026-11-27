@@ -32,5 +32,11 @@ zeroize.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 
+[target.'cfg(unix)'.dependencies]
+tokio = { workspace = true, features = ["process"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = "0.3.8"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Graphics_Gdi", "Win32_Security_Authorization", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

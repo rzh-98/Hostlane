@@ -198,6 +198,23 @@ pub async fn serve(daemon: Arc<Daemon>) -> Result<(), ServeError> {
     tracing::info!(socket = %path.display(), "daemon listening");
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    #[cfg(target_os = "linux")]
+    let tray = tokio::spawn(crate::linux_tray::register());
+    #[cfg(target_os = "macos")]
+    let tray = std::env::current_exe()
+        .and_then(|cli| {
+            tokio::process::Command::new(cli)
+                .arg("--hostlane-menu-bar")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+        })
+        .map(|mut child| {
+            let lifetime = child.stdin.take();
+            (lifetime, tokio::spawn(async move { child.wait().await }))
+        })
+        .inspect_err(|err| tracing::warn!(%err, "menu bar unavailable"));
     let result = loop {
         tokio::select! {
             accepted = listener.accept() => match accepted {
@@ -218,6 +235,24 @@ pub async fn serve(daemon: Arc<Daemon>) -> Result<(), ServeError> {
     };
 
     remove_socket(&path);
+    #[cfg(target_os = "linux")]
+    {
+        tray.abort();
+        if let Ok(handle) = tray.await {
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_secs(1), handle.shutdown()).await;
+        }
+    }
+    #[cfg(target_os = "macos")]
+    if let Ok((lifetime, mut worker)) = tray {
+        drop(lifetime);
+        if tokio::time::timeout(std::time::Duration::from_secs(1), &mut worker)
+            .await
+            .is_err()
+        {
+            worker.abort();
+        }
+    }
     daemon.close().await;
     tracing::info!("daemon stopped");
     result

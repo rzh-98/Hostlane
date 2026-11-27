@@ -58,6 +58,14 @@ jobs:
           cargo build -p hostlane-cli
           python3 scripts/e2e.py target/debug/hostlane
 
+      - name: Verify native daemon indicator lifecycle
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            dbus-run-session -- python3 scripts/unix-tray-smoke.py target/debug/hostlane
+          else
+            python3 scripts/unix-tray-smoke.py target/debug/hostlane
+          fi
+
       - name: Performance measurements
         if: runner.os == 'Linux'
         run: |
