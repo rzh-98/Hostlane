@@ -1,5 +1,6 @@
 [package]
 name = "hostlane-cli"
+default-run = "hostlane"
 description = "The `hostlane` command: CLI for agents and people, and the daemon entry point."
 version.workspace = true
 edition.workspace = true

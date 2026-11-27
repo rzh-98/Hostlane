@@ -92,7 +92,7 @@ jobs:
           $version = (Get-Content package.json | ConvertFrom-Json).version
           New-Item -ItemType Directory -Path cli | Out-Null
           $zip = "cli/hostlane-$version-${{ matrix.target }}.zip"
-          Compress-Archive -Path ../../target/release/hostlane.exe,../../LICENSE,../../README.md -DestinationPath $zip
+          Compress-Archive -Path ../../target/release/hostlane.exe,../../target/release/hostlane-background.exe,../../LICENSE,../../README.md -DestinationPath $zip
           "$((Get-FileHash $zip -Algorithm SHA256).Hash)  $(Split-Path -Leaf $zip)" | Set-Content "$zip.sha256"
 
       - name: Upload installers and CLI

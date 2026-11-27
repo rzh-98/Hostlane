@@ -4,7 +4,7 @@
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const output = process.argv[2] ?? 'screenshot.png'
 const port = 9333
@@ -81,6 +81,12 @@ function daemonStatus(hostlane, env) {
 const { executable, hostlane } = findApp()
 for (const file of [executable, hostlane]) {
   if (!existsSync(file)) throw new Error(`Not found: ${file}`)
+}
+if (
+  process.platform === 'win32' &&
+  !existsSync(join(dirname(hostlane), 'hostlane-background.exe'))
+) {
+  throw new Error('Missing Windows background task host')
 }
 console.log(`Launching ${executable}`)
 

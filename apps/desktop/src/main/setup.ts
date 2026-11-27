@@ -115,6 +115,13 @@ export async function setupStatus(): Promise<SetupStatus> {
         : part === dirname(link)
     )
   const linked = windows ? dirOnPath : target === binary
+  const installedBinary = service.ok && service.result.installed ? service.result.binary : null
+  const serviceOutdated =
+    !!installedBinary &&
+    (windows
+      ? installedBinary.toLowerCase() !==
+        join(dirname(binary), 'hostlane-background.exe').toLowerCase()
+      : installedBinary !== binary)
   const env: Record<string, string> = {}
   for (const name of HOSTLANE_ENV) {
     const value = process.env[name]
@@ -123,6 +130,7 @@ export async function setupStatus(): Promise<SetupStatus> {
   return {
     binary,
     binaryExists: existsSync(binary),
+    serviceOutdated,
     command: linked ? link : binary,
     env,
     cli: {

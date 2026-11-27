@@ -164,5 +164,6 @@ jobs:
           npx electron scripts/gui-flow.cjs
           New-Item -ItemType Directory -Force ../../target/release | Out-Null
           Copy-Item ../../target/debug/hostlane.exe ../../target/release/hostlane.exe -Force
+          Copy-Item ../../target/debug/hostlane-background.exe ../../target/release/hostlane-background.exe -Force
           npx electron-builder --win --dir --publish never
           node scripts/smoke.mjs

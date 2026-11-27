@@ -128,19 +128,20 @@ fn task_name() -> Result<String> {
 }
 
 fn task_xml_for(def: &Definition, user: &str) -> String {
-    let mut args = def.args.clone();
-    if !args.iter().any(|arg| arg == "--socket") {
-        args.extend([
-            "--socket".into(),
-            paths::socket_path().display().to_string(),
-        ]);
-    }
-    args.extend([
+    let socket = def
+        .args
+        .windows(2)
+        .find(|pair| pair[0] == "--socket")
+        .map(|pair| pair[1].clone())
+        .unwrap_or_else(|| paths::socket_path().display().to_string());
+    let args = [
+        "--socket".into(),
+        socket,
         "--data-dir".into(),
         paths::data_dir().display().to_string(),
         "--ssh-config".into(),
         paths::ssh_config_path().display().to_string(),
-    ]);
+    ];
     let arguments = args
         .iter()
         .map(|arg| {
@@ -155,7 +156,11 @@ fn task_xml_for(def: &Definition, user: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Triggers><LogonTrigger><Enabled>true</Enabled><UserId>{user}</UserId></LogonTrigger></Triggers><Principals><Principal id="User"><UserId>{user}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals><Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><Hidden>true</Hidden><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure></Settings><Actions Context="User"><Exec><Command>{}</Command><Arguments>{arguments}</Arguments></Exec></Actions></Task>"#,
-        xml(&def.binary.display().to_string())
+        xml(&def
+            .binary
+            .with_file_name("hostlane-background.exe")
+            .display()
+            .to_string())
     )
 }
 
@@ -342,7 +347,13 @@ pub fn status() -> ServiceStatus {
 }
 
 fn run(program: &str, args: &[&str]) -> Result<std::process::Output> {
-    Command::new(program)
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    command
         .args(args)
         .output()
         .with_context(|| format!("cannot run `{program}`"))
@@ -418,6 +429,16 @@ pub async fn install(client: &Client, def: &Definition) -> Result<Installed> {
         std::fs::create_dir_all(dir)?;
     }
     let bytes = service_bytes(manager, def)?;
+    if manager == Manager::Scheduler
+        && !def
+            .binary
+            .with_file_name("hostlane-background.exe")
+            .is_file()
+    {
+        bail!(
+            "hostlane-background.exe must be installed next to hostlane.exe for Windows login startup"
+        );
+    }
     if manager == Manager::Launchd {
         let domain = gui_domain()?;
         let _ = run("launchctl", &["bootout", &format!("{domain}/{LABEL}")]);
@@ -554,8 +575,11 @@ mod tests {
         let task = task_xml_for(&def, "S-1-5-21-1");
         assert_eq!(
             installed_binary(Manager::Scheduler, &task).as_deref(),
-            def.binary.to_str()
+            def.binary
+                .with_file_name("hostlane-background.exe")
+                .to_str()
         );
+        assert!(!task.contains(r#""daemon" "run""#));
         assert!(task.contains(r#""--socket" "\\.\pipe\with &amp; spaces""#));
         assert!(task.contains(
             "<LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel>"

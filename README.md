@@ -199,6 +199,8 @@ The icon means the **local daemon is running**, not that an SSH host is connecte
 
 ### Windows
 
+If a previously registered login task opens a terminal, install a build with the console-free task host, then choose **Settings → Daemon → Background service → Update**. This restarts the daemon; finish active commands and tunnels first. For a standalone CLI installation, keep `hostlane-background.exe` next to `hostlane.exe` to register the login task.
+
 Run `hostlane.exe daemon start` for a background daemon; `daemon install` registers a least-privilege login task for the current user. The desktop app bundles the binary. Under Integrations, add it to your user PATH, then sign out and back in. OpenSSH agent keys use the Windows `ssh-agent` service if enabled. This supports Windows as the **local client**; remote web operations still expect Unix server tools.
 
 ### Environment variables

@@ -132,6 +132,7 @@ export interface SetupStatus {
   /** The `hostlane` binary this app uses. */
   binary: string
   binaryExists: boolean
+  serviceOutdated: boolean
   /** Command for MCP configs: the PATH link when it points at `binary`, else `binary`. */
   command: string
   /** HOSTLANE_* variables this app runs with, repeated in MCP configs. */

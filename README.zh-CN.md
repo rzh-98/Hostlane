@@ -203,6 +203,8 @@ hostlane web forwards
 
 ### Windows
 
+如果旧版注册的后台服务启动时留下黑色终端，安装含修复的新版本后，打开 **设置 → 守护进程 → 后台服务 → 更新**，即可切换为无控制台的登录任务。更新会重启守护进程，请先结束正在运行的命令和隧道。独立 CLI 用户注册登录任务时需将 `hostlane-background.exe` 与 `hostlane.exe` 放在同一目录。
+
 运行 `hostlane.exe daemon start` 启动后台守护进程；`daemon install` 注册当前用户登录时运行的最低权限任务。桌面端内置二进制，接入页可以将它加入用户 PATH，重新登录后生效。启用 Windows OpenSSH 的 `ssh-agent` 服务后即可使用其中的密钥。这里支持的是 **Windows 本机客户端**；远程 Web 运维仍面向 Unix 服务器。
 
 ### 环境变量

@@ -275,7 +275,7 @@ pub async fn serve(daemon: Arc<Daemon>) -> Result<(), ServeError> {
                 tokio::spawn(async move {let _ = serve_stream(daemon,stream).await;});
             }
             _=daemon.shutdown.notified()=>break Ok(()),
-            _=tokio::signal::ctrl_c()=>break Ok(()),
+            Ok(())=tokio::signal::ctrl_c()=>break Ok(()),
         }
     };
     daemon.close().await;

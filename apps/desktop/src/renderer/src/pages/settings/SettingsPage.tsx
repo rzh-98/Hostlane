@@ -53,8 +53,7 @@ export function SettingsPage() {
   const [notice, setNotice] = useState<SettingsNotice | null>(null)
   const status = daemon.status
   const service = setup.status?.service ?? null
-  const outdated =
-    service?.installed && service.binary !== null && service.binary !== setup.status?.binary
+  const outdated = setup.status?.serviceOutdated
 
   const changeService = async (action: 'installService' | 'uninstallService') => {
     const error = await runSetup(action)

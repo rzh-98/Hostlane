@@ -26,6 +26,8 @@ win:
   extraResources:
     - from: ../../target/release/hostlane.exe
       to: bin/hostlane.exe
+    - from: ../../target/release/hostlane-background.exe
+      to: bin/hostlane-background.exe
   target:
     - nsis
 nsis:
