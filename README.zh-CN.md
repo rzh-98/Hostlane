@@ -6,7 +6,7 @@
   <p>不内置 LLM；服务器端不需要安装任何组件，只要有 <code>sshd</code>。</p>
   <p>
     <a href="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml/badge.svg" /></a>
-    <img alt="Status" src="https://img.shields.io/badge/status-v1.0.2-blue" />
+    <img alt="Status" src="https://img.shields.io/badge/status-v1.0.3-blue" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -23,7 +23,7 @@
 </div>
 
 > [!WARNING]
-> **Hostlane 1.0.2 新增[后台常驻图标](#后台常驻图标)。** 在 macOS 菜单栏、Windows 通知区域或支持的 Linux 托盘中，可以查看守护进程是否在运行，并重新打开已安装的桌面端。安装包尚未签名，macOS 版本未经公证；请仅从官方 GitHub Release 下载。升级需要手动完成，暂不支持自动更新或通过 Homebrew 安装。
+> **Hostlane 1.0.3 修复了 Windows 登录任务启动后留下空白终端的问题。** 已注册旧版后台服务的用户请按 [Windows 升级说明](#windows) 更新登录任务。安装包尚未签名，macOS 版本未经公证；请仅从官方 GitHub Release 下载。升级需要手动完成，暂不支持自动更新或通过 Homebrew 安装。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -203,7 +203,7 @@ hostlane web forwards
 
 ### Windows
 
-如果旧版注册的后台服务启动时留下黑色终端，安装含修复的新版本后，打开 **设置 → 守护进程 → 后台服务 → 更新**，即可切换为无控制台的登录任务。更新会重启守护进程，请先结束正在运行的命令和隧道。独立 CLI 用户注册登录任务时需将 `hostlane-background.exe` 与 `hostlane.exe` 放在同一目录。
+如果已在旧版注册过后台服务，安装 v1.0.3 后，打开 **设置 → 守护进程 → 后台服务 → 更新**，即可切换为无控制台的登录任务。更新会重启守护进程，请先结束正在运行的命令和隧道。独立 CLI 用户注册登录任务时需将 `hostlane-background.exe` 与 `hostlane.exe` 放在同一目录。
 
 运行 `hostlane.exe daemon start` 启动后台守护进程；`daemon install` 注册当前用户登录时运行的最低权限任务。桌面端内置二进制，接入页可以将它加入用户 PATH，重新登录后生效。启用 Windows OpenSSH 的 `ssh-agent` 服务后即可使用其中的密钥。这里支持的是 **Windows 本机客户端**；远程 Web 运维仍面向 Unix 服务器。
 
@@ -330,6 +330,7 @@ claude mcp add --scope user hostlane -- hostlane mcp
 | **V1.0** 发布       | 跨平台稳定版，包含 CLI 和桌面安装包                                                                                                        | ✅ 已发布 |
 | **V1.0.1** 维护版   | 可选的后台 SSH 可达性检测                                                                                                                  | ✅ 已发布 |
 | **V1.0.2** 维护版   | macOS、Windows 和 Linux 的后台守护进程图标，可从图标重新打开桌面端                                                                         | ✅ 已发布 |
+| **V1.0.3** 维护版   | Windows 登录任务不再打开终端，设置页可更新旧任务                                                                                           | ✅ 已发布 |
 | **V1.0 后续分发**   | 代码签名和公证、自动更新、Homebrew                                                                                                         | 计划中    |
 
 M10 之后的顺序按实际使用中最常用的场景决定。完整需求（含编号和优先级）见 [docs/requirements.md](docs/requirements.md)。
