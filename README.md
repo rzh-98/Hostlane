@@ -6,7 +6,7 @@
   <p>No built-in LLM. Nothing to install on the server: <code>sshd</code> is enough.</p>
   <p>
     <a href="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml/badge.svg" /></a>
-    <img alt="Status" src="https://img.shields.io/badge/status-v1.0.1-blue" />
+    <img alt="Status" src="https://img.shields.io/badge/status-v1.0.2-blue" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -23,7 +23,7 @@
 </div>
 
 > [!WARNING]
-> **Hostlane 1.0.1 adds background SSH reachability checks.** Installers are unsigned and macOS builds are not notarized; download only from the official GitHub release. Upgrades are manual; automatic updates and Homebrew distribution are not available yet.
+> **Hostlane 1.0.2 adds a [background icon](#background-icon).** Check whether the daemon is running and reopen the bundled desktop app from the macOS menu bar, Windows notification area, or a supported Linux tray. Installers are unsigned and macOS builds are not notarized; download only from the official GitHub release. Upgrades are manual; automatic updates and Homebrew distribution are not available yet.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />
@@ -323,6 +323,7 @@ The desktop app's Integrations page has the same snippet with a copy button.
 | **M12** Windows            | User-only named pipe, OpenSSH agent, login task, background launch and PATH setup                                                                                                      | ✅ Done     |
 | **V1.0** Release           | Cross-platform stable 1.0.0 release with CLI and desktop installers                                                                                                                    | ✅ Released |
 | **V1.0.1** Maintenance     | Optional background SSH reachability checks                                                                                                                                            | ✅ Released |
+| **V1.0.2** Maintenance     | Background daemon icon on macOS, Windows and Linux, with an action to reopen the bundled desktop app                                                                                   | ✅ Released |
 | **Post-1.0** Distribution  | Code signing and notarization, auto-update, Homebrew                                                                                                                                   | Planned     |
 
 The order after M10 depends on which scenarios come up most in real use. The full requirement list, with IDs and priorities, is in [docs/requirements.md](docs/requirements.md) (Chinese).
