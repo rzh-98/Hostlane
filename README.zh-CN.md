@@ -6,7 +6,7 @@
   <p>不内置 LLM；服务器端不需要安装任何组件，只要有 <code>sshd</code>。</p>
   <p>
     <a href="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml/badge.svg" /></a>
-    <img alt="Status" src="https://img.shields.io/badge/status-v1.0.3-blue" />
+    <img alt="Status" src="https://img.shields.io/badge/status-v1.1.0-blue" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-087E8B?logo=tauri&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -23,7 +23,7 @@
 </div>
 
 > [!WARNING]
-> **Hostlane 1.0.3 修复了 Windows 登录任务启动后留下空白终端的问题。** 已注册旧版后台服务的用户请按 [Windows 升级说明](#windows) 更新登录任务。安装包尚未签名，macOS 版本未经公证；请仅从官方 GitHub Release 下载。升级需要手动完成，暂不支持自动更新或通过 Homebrew 安装。
+> **Hostlane 1.1.0 将桌面端从 Electron 迁移到 Tauri 2。** 守护进程仍独立运行，关闭窗口不会中断 SSH 会话。安装包尚未签名，macOS 版本未经公证；请仅从官方 GitHub Release 下载并手动升级。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />

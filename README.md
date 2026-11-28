@@ -6,7 +6,7 @@
   <p>No built-in LLM. Nothing to install on the server: <code>sshd</code> is enough.</p>
   <p>
     <a href="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml/badge.svg" /></a>
-    <img alt="Status" src="https://img.shields.io/badge/status-v1.0.3-blue" />
+    <img alt="Status" src="https://img.shields.io/badge/status-v1.1.0-blue" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-087E8B?logo=tauri&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
@@ -23,7 +23,7 @@
 </div>
 
 > [!WARNING]
-> **Hostlane 1.0.3 fixes the blank terminal left open by Windows login tasks.** If you registered a background service in an earlier version, follow the [Windows upgrade instructions](#windows) to update its task. Installers are unsigned and macOS builds are not notarized; download only from the official GitHub release. Upgrades are manual; automatic updates and Homebrew distribution are not available yet.
+> **Hostlane 1.1.0 moves the desktop app from Electron to Tauri 2.** The daemon remains independent: closing the window does not interrupt your SSH sessions. Installers are unsigned and macOS builds are not notarized; download only from the official GitHub release. Upgrades are manual.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hosts-dark.png" />

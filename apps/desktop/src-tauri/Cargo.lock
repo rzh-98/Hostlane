@@ -2082,7 +2082,7 @@ dependencies = [
 
 [[package]]
 name = "hostlane-core"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "data-encoding",
  "dirs 6.0.0",
@@ -2111,7 +2111,7 @@ dependencies = [
 
 [[package]]
 name = "hostlane-desktop"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "base64 0.22.1",
  "dirs 6.0.0",
@@ -2130,7 +2130,7 @@ dependencies = [
 
 [[package]]
 name = "hostlane-protocol"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "serde",
  "serde_json",
