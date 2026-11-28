@@ -66,7 +66,10 @@ export function TunnelDetail({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button disabled={tunnel.state !== 'active'} onClick={() => window.open(url)}>
+          <Button
+            disabled={tunnel.state !== 'active'}
+            onClick={() => window.desktop?.openExternal(url)}
+          >
             <ExternalLink />
             在浏览器中打开
           </Button>

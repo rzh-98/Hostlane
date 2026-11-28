@@ -40,12 +40,12 @@ Hostlane/
 │        ├─ jobs.rs                 `job start/status/logs/cancel`、`jobs`
 │        ├─ clients.rs              `client add/revoke/require-token`、`clients`
 │        └─ service.rs              `daemon install`：launchd / systemd --user 服务文件
-├─ apps/desktop/                 Electron 桌面端（基于 Desktop-Starter）
+├─ apps/desktop/                 Tauri 2 桌面端（基于 Desktop-Starter）
+│  ├─ src-tauri/src/main.rs      调用 core 客户端、启动守护进程、转发事件和审批通知
+│  ├─ src-tauri/src/actions.rs   原生凭据输入、服务注册、导出和接入操作
 │  └─ src/
-│     ├─ main/daemon.ts          连接守护进程、按需拉起、保持事件订阅并转发给渲染进程
-│     ├─ main/setup.ts           把 CLI 链接到 ~/.local/bin、查看和注册后台服务（调用 hostlane --json daemon …）
-│     ├─ main/paths.ts           socket 路径规则（与 hostlane-core/src/paths.rs 保持一致）
-│     ├─ shared/ipc.ts           IPC 通道、渲染进程可调用的方法白名单
+│     ├─ renderer/src/tauri.ts   在 React 挂载前初始化受限 IPC 桥接
+│     ├─ shared/ipc.ts           页面 API；renderer-methods.json 是原生端和 TS 共用的 RPC 白名单
 │     ├─ shared/protocol/        由 ts-rs 生成，不要手改
 │     └─ renderer/src/app/       守护进程状态、事件、连接状态等跨页面的 store
 ├─ scripts/
@@ -56,14 +56,14 @@ Hostlane/
 └─ docs/
 ```
 
-依赖方向：`hostlane-cli → hostlane-core → hostlane-protocol`。桌面端只依赖由 `hostlane-protocol` 生成的 TS 类型，不直接依赖 Rust 代码。
+依赖方向：CLI 和原生桌面端 → `hostlane-core` → `hostlane-protocol`。WebView 只依赖生成的 TS 类型。
 
 ## 进程模型
 
 ```text
 agent ──shell──► hostlane（CLI，每次调用一个进程）──┐
 agent ──stdio──► hostlane mcp（随 agent 启停）─────┤ 本地 socket
-Electron 主进程 ◄─IPC─ 渲染进程（沙箱）─────────────┤ JSON-RPC
+Tauri 原生端 ◄─IPC─ 系统 WebView ──────────────────┤ JSON-RPC
                                                     ▼
                                      hostlane daemon run（常驻）
 ```
@@ -85,7 +85,7 @@ Electron 主进程 ◄─IPC─ 渲染进程（沙箱）────────
 - `hostlane daemon install` 把守护进程注册为用户级服务：macOS 写入 `~/Library/LaunchAgents/com.hostlane.daemon.plist` 并 `launchctl bootstrap`（`RunAtLoad`，`KeepAlive` 只在非 0 退出时重启）；Linux 写入 `~/.config/systemd/user/hostlane.service` 并 `enable` + `restart`（`Restart=on-failure`）。服务文件记录当前二进制的绝对路径和当时设置的 `HOSTLANE_SOCKET`、`HOSTLANE_DATA_DIR`、`HOSTLANE_SSH_CONFIG`、`HOSTLANE_NOTIFY`。正在运行的守护进程会先被停止，再由服务接管。`--print` 只输出服务文件。
 - 服务已安装时，`hostlane daemon start`（以及桌面端和 MCP 的自动拉起）改为让服务管理器启动（`launchctl kickstart` / `systemctl --user start`），不会在服务之外再起一个守护进程。`hostlane daemon stop` 正常退出（退出码 0），服务不会把它重新拉起。
 - `hostlane daemon uninstall` 停止服务（守护进程随之退出）并删除服务文件；`hostlane daemon service` 查看是否安装以及服务运行的二进制。
-- 桌面端在应用资源目录的 `bin/` 内置 CLI（Windows 为 `hostlane.exe`）。`main/daemon.ts` 在开发时使用 `target/debug` 下的程序，也可以用 `HOSTLANE_BIN` 指定。
+- macOS 安装包在 `Contents/Resources/bin/` 内置 CLI；Windows 和 Linux 在 Tauri 资源目录的 `resources/bin/` 提供 CLI。开发模式使用仓库 `target/debug` 下的程序。
 
 ## 路径
 
@@ -381,7 +381,7 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）、`HOSTLANE_SESSION` 和
 1. 在 `hostlane-protocol` 中定义参数和结果类型（加上 `#[derive(TS)] #[ts(export)]`），并把方法名加入 `method` 模块。
 2. 在 `hostlane-core/src/handlers.rs` 的 `run` 中实现。访问服务器的方法要加入 `method::GATED`，并在 `policy/mod.rs` 的 `subject` 中说明如何分级。
 3. 在 CLI 中加对应的子命令（支持 `--json`）；agent 需要用到时，在 `hostlane-cli/src/mcp.rs` 的 `specs` 中加一个工具（只能由人执行的操作不要加）。
-4. 如果渲染进程需要调用，把方法名加入 `apps/desktop/src/shared/ipc.ts` 的 `RENDERER_METHODS`。
+4. 如果渲染进程需要调用，把方法名加入 `apps/desktop/src/shared/renderer-methods.json`。仅供原生端使用的方法（如 `secrets.set`）不得加入。
 5. 运行 `cargo test --workspace` 重新生成 TS 类型。
 
 ## CLI 约定
@@ -407,14 +407,14 @@ CLI 从环境变量 `HOSTLANE_CLIENT`（默认 `cli`）、`HOSTLANE_SESSION` 和
 
 - `cargo test --workspace`：单元测试，同时重新生成 `apps/desktop/src/shared/protocol/`。
 - `python3 scripts/e2e.py [hostlane]`：在 127.0.0.1 上以当前用户起一个临时 sshd（端口 `$E2E_PORT`，默认 2222；自己的主机密钥、用户密钥和 `sshd_config`），`HOSTLANE_SOCKET`、`HOSTLANE_DATA_DIR`、`HOSTLANE_SSH_CONFIG` 都指向临时目录，然后用 CLI 和 MCP 跑完整流程：指纹校验、exec、输出截断、文件读写和撤销、端口发现和 HTTP 探测、隧道、审批和 ticket、急停、审计、后台任务（nohup；服务器有 `tmux` 时再测 tmux）、客户端令牌、MCP 的不可信数据标记。`E2E_KEEP=1` 保留临时目录。
-- `apps/desktop/scripts/smoke.mjs`：启动打包后的桌面端（独立的数据目录和 `--user-data-dir`），检查页面挂载、主机页显示 `ssh_config` 中的主机、内置的守护进程已启动，并截图。
+- `apps/desktop/scripts/smoke.mjs <桌面程序>`：使用临时 socket、数据目录和 SSH 配置，检查 WebView 挂载、能通过 Tauri 调用读取测试主机，以及原生端拒绝直接调用 `secrets.set`。
 - `.github/workflows/ci.yml`（push 到 main 和 PR）：
   - Linux 和 macOS：`cargo fmt --check`、`cargo clippy -D warnings`、`cargo test`、检查生成的 TS 类型已提交、`e2e.py`；Linux 上再跑 `bench.py`，结果写到 job summary。
-  - 桌面端：`npm ci`、`typecheck`、`prettier --check`、`electron-vite build`。
+  - 桌面端：`npm ci`、`typecheck`、`prettier --check`、Vite 生产构建。
   - Windows：在原生 runner 检查所有 Rust 目标，验证后台启动、管道请求、桌面传输、登录任务注册和注销、打包后读取测试主机。测试使用临时数据目录。
-- `.github/workflows/release.yml`（推送 `v*` tag）：打包 macOS arm64（dmg、zip）、Linux x64（AppImage）和 Windows x64（NSIS），运行桌面冒烟测试，并发布各平台 CLI 压缩包和 SHA-256。安装包未签名；tag 带 `-` 时标为预发布。
+- `.github/workflows/release.yml`（推送 `v*` tag）：打包 macOS arm64（DMG）、Linux x64（AppImage）和 Windows x64（NSIS），运行桌面冒烟测试，并发布各平台 CLI 压缩包和 SHA-256。安装包未签名；tag 带 `-` 时标为预发布。
 
-Windows 传输：默认名称为 `\\.\pipe\hostlane-<数据目录 SHA-256 的前 24 位>`。服务端设置当前用户 SID 为所有者，使用仅对该 SID 放行的受保护 DACL，拒绝网络客户端；首实例要求名称未被占用。Rust 客户端在发送任何请求前验证已打开句柄的所有者；Electron 通过内置 CLI 的 stdio 桥使用相同检查，不将凭据放在命令行参数中。Windows 使用当前用户的交互式登录任务，不保存密码、不要求提升权限。
+Windows 传输：默认名称为 `\\.\pipe\hostlane-<数据目录 SHA-256 的前 24 位>`。服务端设置当前用户 SID 为所有者，使用仅对该 SID 放行的受保护 DACL，拒绝网络客户端；首实例要求名称未被占用。桌面端与 CLI 使用同一 Rust 客户端，在发送任何请求前验证已打开句柄的所有者。Windows 使用当前用户的交互式登录任务，不保存密码、不要求提升权限。
 
 ## 性能实测
 

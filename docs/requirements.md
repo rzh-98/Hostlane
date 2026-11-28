@@ -24,8 +24,8 @@ Hostlane 只提供“手脚”：连接、执行、读写文件、端口映射�
 | --- | --- |
 | 名称 | Hostlane；CLI 命令为 `hostlane` |
 | 守护进程语言 | Rust（`tokio` + `russh` + `rmcp` + `rusqlite`），重点考虑性能和常驻时的资源占用 |
-| 运行方式 | 守护进程 `hostlane daemon` 常驻并注册为用户级服务；Electron 可以完全退出 |
-| 桌面端 | 基于 Desktop-Starter（Electron + React + Tailwind + Radix） |
+| 运行方式 | 守护进程 `hostlane daemon` 常驻并注册为用户级服务；桌面端可以完全退出 |
+| 桌面端 | 基于 Desktop-Starter 的 Tauri 2 方案（系统 WebView + React + Tailwind + Radix） |
 | 人的操作入口 | 主机与凭据、agent 接入、审批、监视、审计导出和回滚必须有图形界面；手工运行 CLI 或编辑 shell 配置不是使用桌面端的前置条件。CLI/MCP 继续作为 agent 的入口 |
 | 端口管理范围 | 支持 systemd、Docker 和 docker-compose；不支持 Kubernetes |
 | 终端 | 只读会话监视器，实时显示和回放 agent 执行的命令与输出；不支持人工输入或接管 |
@@ -35,7 +35,7 @@ Hostlane 只提供“手脚”：连接、执行、读写文件、端口映射�
 ```text
 你的 agent ──CLI / MCP──┐
                         ▼
-Electron UI ──IPC──► 主进程 ──本地 socket──► hostlane daemon ──SSH/SFTP──► 服务器
+系统 WebView ──IPC──► Tauri 原生端 ──本地 socket──► hostlane daemon ──SSH/SFTP──► 服务器
                                               ├─ 连接池
                                               ├─ 执行器 / 后台任务
                                               ├─ 文件操作

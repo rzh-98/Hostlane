@@ -78,8 +78,6 @@ jobs:
     defaults:
       run:
         working-directory: apps/desktop
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: 1
     steps:
       - uses: actions/checkout@v7
 
@@ -98,8 +96,8 @@ jobs:
       - name: Check formatting
         run: npx prettier --check src scripts ../../README.md ../../README.zh-CN.md ../../docs/architecture.md
 
-      - name: Build renderer and main
-        run: npx electron-vite build
+      - name: Build renderer
+        run: npm run web:build
 
   windows:
     name: Windows (native runtime)
@@ -160,10 +158,6 @@ jobs:
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           npm ci
-          npm run build
-          npx electron scripts/gui-flow.cjs
-          New-Item -ItemType Directory -Force ../../target/release | Out-Null
-          Copy-Item ../../target/debug/hostlane.exe ../../target/release/hostlane.exe -Force
-          Copy-Item ../../target/debug/hostlane-background.exe ../../target/release/hostlane-background.exe -Force
-          npx electron-builder --win --dir --publish never
-          node scripts/smoke.mjs
+          node scripts/runtime.mjs
+          npx tauri build --debug --no-bundle
+          node scripts/smoke.mjs src-tauri/target/debug/Hostlane.exe

@@ -36,9 +36,6 @@ function apply(): void {
   root.dataset.density = state.density
   if (state.accentHue === null) root.style.removeProperty('--user-hue')
   else root.style.setProperty('--user-hue', String(state.accentHue))
-
-  const toolbarHeight = parseFloat(getComputedStyle(root).getPropertyValue('--spacing-toolbar'))
-  void window.desktop?.setTitleBarHeight(toolbarHeight)
 }
 
 /** Call once before rendering to avoid a flash of the wrong theme. */

@@ -14,5 +14,5 @@
     "noUnusedParameters": true,
     "composite": true
   },
-  "include": ["electron.vite.config.ts", "src/main/**/*", "src/preload/**/*", "src/shared/**/*"]
+  "include": ["vite.tauri.config.mts", "package.json"]
 }

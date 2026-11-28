@@ -1,4 +1,9 @@
 /target
+apps/desktop/src-tauri/target
+apps/desktop/src-tauri/gen
+apps/desktop/src-tauri/runtime
+apps/desktop/src-tauri/icons/android
+apps/desktop/src-tauri/icons/ios
 node_modules
 out
 release

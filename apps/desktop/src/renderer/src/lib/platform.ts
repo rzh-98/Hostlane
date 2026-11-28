@@ -1,4 +1,4 @@
-/** `darwin`, `win32`, `linux` — or `web` when running outside Electron. */
+/** `darwin`, `win32`, `linux` — or `web` outside the desktop shell. */
 export const platform: string = window.desktop?.platform ?? 'web'
 export const isMac = platform === 'darwin' || (platform === 'web' && /Mac/.test(navigator.platform))
 

@@ -8,7 +8,7 @@
     <a href="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml/badge.svg" /></a>
     <img alt="Status" src="https://img.shields.io/badge/status-v1.0.3-blue" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
-    <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
+    <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-087E8B?logo=tauri&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
     <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-lightgrey" />
@@ -56,7 +56,7 @@ Agents are good at operating servers, but the tools around them fall short. Term
 ```text
 your agent ──CLI / MCP──┐
                         ▼
-Electron UI ──IPC──► main process ──local socket──► hostlane daemon ──SSH/SFTP──► servers
+System WebView ──Tauri IPC──► Rust desktop ──local socket──► hostlane daemon ──SSH/SFTP──► servers
                                                     ├─ connection pool
                                                     ├─ exec / background jobs
                                                     ├─ file operations
@@ -80,7 +80,7 @@ With a desktop build, no terminal is needed: open **Hosts → Add host**, browse
 
 Installers are unsigned and macOS builds are not notarized. Download the desktop installers and CLI archives from the [official GitHub releases](https://github.com/rzh-98/Hostlane/releases/latest); upgrades are manual. The commands below are for building from source.
 
-**Requirements:** Rust 1.89+, Node.js 22.12+ and npm 10+.
+**Requirements:** Current stable Rust, Node.js 24, npm and the [Tauri system prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform. These are build dependencies, not requirements for the SSH server.
 
 ```bash
 git clone https://github.com/rzh-98/Hostlane.git && cd Hostlane
@@ -105,7 +105,7 @@ npm install
 npm run dev
 
 # Package the app with a release build of hostlane in Resources/bin (unsigned)
-npm run pack        # or: npm run dist:mac / dist:linux
+npm run dist        # installers: src-tauri/target/release/bundle/
 ```
 
 ### CLI
@@ -339,16 +339,15 @@ The order after M10 depends on which scenarios come up most in real use. The ful
 │  ├─ hostlane-protocol/       Wire types: JSON-RPC frames, error codes, method params and results
 │  ├─ hostlane-core/           Daemon: socket server, SSH pool, exec, files (SFTP), ports, tunnels, policy and approvals, audit (SQLite), client
 │  └─ hostlane-cli/            The `hostlane` binary: CLI, MCP server (`mcp`), `daemon` subcommands and service registration
-├─ apps/desktop/               Electron app, based on Desktop-Starter
+├─ apps/desktop/               Tauri 2 app, based on Desktop-Starter
+│  ├─ src-tauri/src/           Native commands, daemon connection and event subscription
 │  └─ src/
-│     ├─ main/daemon.ts        Connects to the daemon, starts it on demand, forwards events
-│     ├─ main/setup.ts         Links the CLI into ~/.local/bin, registers the login service
 │     ├─ shared/protocol/      TypeScript types generated from hostlane-protocol (do not edit)
 │     └─ renderer/src/pages/   Hosts, Ports, Tunnels, Sessions, Approvals, Audit, Integrations, Settings
 └─ docs/                       Requirements, architecture, screenshots
 ```
 
-Dependencies point one way: `hostlane-cli → hostlane-core → hostlane-protocol`. The desktop app depends only on the generated TypeScript types.
+The CLI and Tauri host share the Rust socket client. The WebView uses generated TypeScript types and cannot access the socket or SSH credentials directly.
 
 ## Development
 
@@ -371,7 +370,7 @@ cargo build --release -p hostlane-cli && python3 scripts/bench.py
 - CI runs the checks, SSH end-to-end tests on Linux and macOS, and native pipe, login-task and packaged desktop smoke tests on Windows. Pushing a `v*` tag builds unsigned installers and CLI archives and publishes a GitHub Release. See [Testing and CI](docs/architecture.md#测试与-ci).
 - Adding a JSON-RPC method takes five steps; see [Adding a method](docs/architecture.md#新增一个方法).
 - The desktop UI follows the [design system](apps/desktop/docs/design-system.md). `ui/` and `layout/` contain no product code.
-- The socket path rules live in both `crates/hostlane-core/src/paths.rs` and `apps/desktop/src/main/paths.ts`. Keep them in sync.
+- The CLI and desktop share the socket path rules in `crates/hostlane-core/src/paths.rs`.
 
 ## Security
 

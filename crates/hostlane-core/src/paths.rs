@@ -1,5 +1,4 @@
-//! Where Hostlane keeps its socket and data. The desktop app mirrors these rules
-//! in `apps/desktop/src/main/paths.ts`; change both together.
+//! Shared socket and data paths for the daemon, CLI and native desktop client.
 
 use std::path::PathBuf;
 

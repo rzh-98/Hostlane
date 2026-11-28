@@ -1,0 +1,1 @@
+{ "mainBinaryName": "Hostlane", "bundle": { "resources": { "runtime/": "resources/bin/" } } }

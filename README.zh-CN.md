@@ -8,7 +8,7 @@
     <a href="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rzh-98/Hostlane/actions/workflows/ci.yml/badge.svg" /></a>
     <img alt="Status" src="https://img.shields.io/badge/status-v1.0.3-blue" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white" />
-    <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white" />
+    <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-087E8B?logo=tauri&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
     <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-lightgrey" />
@@ -56,7 +56,7 @@ agent 已经很擅长运维服务器，但周边工具跟不上：Chaterm、Warp
 ```text
 你的 agent ──CLI / MCP──┐
                         ▼
-Electron UI ──IPC──► 主进程 ──本地 socket──► hostlane daemon ──SSH/SFTP──► 服务器
+系统 WebView ──Tauri IPC──► Rust 桌面端 ──本地 socket──► hostlane daemon ──SSH/SFTP──► 服务器
                                               ├─ 连接池
                                               ├─ 执行器 / 后台任务
                                               ├─ 文件操作
@@ -84,7 +84,7 @@ Electron UI ──IPC──► 主进程 ──本地 socket──► hostlane d
 
 桌面安装包尚未签名，macOS 版本未经公证。可从[官方 GitHub Releases](https://github.com/rzh-98/Hostlane/releases/latest)下载安装包和 CLI 压缩包；升级需要手动完成。以下命令只用于从源码开发。
 
-**环境要求**：Rust 1.89+、Node.js 22.12+、npm 10+。
+**编译环境**：当前稳定版 Rust、Node.js 24、npm，以及本机平台的 [Tauri 系统依赖](https://v2.tauri.app/start/prerequisites/)。远程服务器不需要安装这些工具。
 
 ```bash
 git clone https://github.com/rzh-98/Hostlane.git && cd Hostlane
@@ -109,7 +109,7 @@ npm install
 npm run dev
 
 # 打包桌面端，release 版 hostlane 放在 Resources/bin（未签名）
-npm run pack        # 或 npm run dist:mac / dist:linux
+npm run dist        # 安装包输出到 src-tauri/target/release/bundle/
 ```
 
 ### CLI
@@ -343,16 +343,15 @@ M10 之后的顺序按实际使用中最常用的场景决定。完整需求（�
 │  ├─ hostlane-protocol/       线上传输的类型：JSON-RPC 帧、错误码、各方法的参数和结果
 │  ├─ hostlane-core/           守护进程：socket 服务、SSH 连接池、exec、文件（SFTP）、端口、隧道、策略与审批、审计（SQLite）、客户端
 │  └─ hostlane-cli/            `hostlane` 二进制：CLI、MCP Server（`mcp`）、`daemon` 子命令和服务注册
-├─ apps/desktop/               Electron 桌面端（基于 Desktop-Starter）
+├─ apps/desktop/               Tauri 2 桌面端（基于 Desktop-Starter）
+│  ├─ src-tauri/src/           原生命令、连接守护进程、订阅事件
 │  └─ src/
-│     ├─ main/daemon.ts        连接守护进程、按需拉起、转发事件
-│     ├─ main/setup.ts         把 CLI 链接到 ~/.local/bin，注册登录服务
 │     ├─ shared/protocol/      由 hostlane-protocol 生成的 TS 类型（不要手改）
 │     └─ renderer/src/pages/   主机、端口、隧道、会话、审批、审计、接入、设置
 └─ docs/                       需求、架构、截图
 ```
 
-依赖方向：`hostlane-cli → hostlane-core → hostlane-protocol`。桌面端只依赖生成的 TS 类型。
+CLI 和 Tauri 原生端共用 Rust socket 客户端。WebView 使用生成的 TS 类型，不直接访问 socket 或 SSH 凭据。
 
 ## 开发
 
@@ -375,7 +374,7 @@ cargo build --release -p hostlane-cli && python3 scripts/bench.py
 - CI 运行上述检查、Linux 和 macOS 上的 SSH 端到端测试，以及 Windows 原生命名管道、登录任务和打包桌面端的冒烟测试。推送 `v*` tag 会构建未签名的安装包和 CLI 压缩包，并发布 GitHub Release。见[测试与 CI](docs/architecture.md#测试与-ci)。
 - 新增一个 JSON-RPC 方法需要五步，见[新增一个方法](docs/architecture.md#新增一个方法)。
 - 桌面端 UI 遵循[设计系统](apps/desktop/docs/design-system.zh-CN.md)；`ui/` 和 `layout/` 中不放业务代码。
-- socket 路径规则同时存在于 `crates/hostlane-core/src/paths.rs` 和 `apps/desktop/src/main/paths.ts`，修改时两边保持一致。
+- 桌面端和 CLI 共用 `crates/hostlane-core/src/paths.rs` 中的 socket 路径规则。
 
 ## 安全
 

@@ -16,6 +16,14 @@ fn desktop_path(cli: &Path, app_dir: Option<&Path>, image: Option<&Path>) -> Opt
     if !cli.is_absolute() || !cli.ends_with("resources/bin/hostlane") {
         return None;
     }
+    if let (Some(app_dir), Some(image)) = (app_dir, image)
+        && root.parent() == Some(app_dir.join("usr/lib").as_path())
+        && app_dir.join("usr/bin/hostlane-desktop").is_file()
+        && image.is_absolute()
+        && image.is_file()
+    {
+        return Some(image.to_owned());
+    }
     let desktop = root.join("hostlane-desktop");
     if !desktop.is_file() {
         return None;

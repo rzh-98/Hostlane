@@ -212,7 +212,7 @@ export function PortsPage() {
     }
     setForwarding(false)
     const url = browserUrl(tunnel, port.http?.scheme)
-    window.open(url)
+    await window.desktop?.openExternal(url)
     setFeedback({
       tone: 'success',
       text: `已把 ${host}:${port.port} 转发到 ${url}`,

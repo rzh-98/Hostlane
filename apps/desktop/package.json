@@ -3,33 +3,31 @@
   "productName": "Hostlane",
   "version": "1.0.3",
   "description": "Hostlane desktop: manage hosts, ports, tunnels and approvals for your own agent.",
-  "main": "./out/main/index.js",
   "private": true,
   "scripts": {
-    "dev": "electron-vite dev",
-    "start": "electron-vite preview",
-    "build": "npm run typecheck && electron-vite build",
+    "dev": "node scripts/runtime.mjs && tauri dev",
+    "start": "npm run dev",
+    "web:dev": "vite --config vite.tauri.config.mts",
+    "web:build": "vite build --config vite.tauri.config.mts",
+    "build": "npm run typecheck && npm run build:cli && tauri build --no-bundle",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "build:cli": "cargo build --release -p hostlane-cli --manifest-path ../../Cargo.toml",
-    "pack": "npm run build:cli && npm run build && electron-builder --dir -c.mac.identity=null",
-    "dist": "npm run build:cli && npm run build && electron-builder",
-    "dist:mac": "npm run build:cli && npm run build && electron-builder --mac",
-    "dist:win": "npm run build:cli && npm run build && electron-builder --win",
-    "dist:linux": "npm run build:cli && npm run build && electron-builder --linux",
-    "postinstall": "electron-builder install-app-deps",
-    "icon": "electron scripts/render-icon.cjs",
+    "build:cli": "node scripts/runtime.mjs release",
+    "pack": "npm run build",
+    "dist": "npm run typecheck && npm run build:cli && tauri build",
+    "dist:mac": "npm run dist -- --bundles app,dmg",
+    "dist:win": "npm run dist -- --bundles nsis",
+    "dist:linux": "npm run dist -- --bundles appimage",
+    "icon": "tauri icon build/icon.png",
     "format": "prettier --write ."
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.5",
+    "@tauri-apps/cli": "^2.12.6",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.3.0",
     "clsx": "^2.1.1",
-    "electron": "^45.4.1",
-    "electron-builder": "^26.18.0",
-    "electron-vite": "^6.0.0",
     "lucide-react": "^1.78.0",
     "prettier": "^3.10.1",
     "radix-ui": "^1.8.1",
@@ -41,10 +39,11 @@
     "vite": "^8.3.8"
   },
   "allowScripts": {
-    "electron": true,
-    "electron-winstaller": true,
     "fsevents": false
   },
   "author": "Hostlane",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.5"
+  }
 }
